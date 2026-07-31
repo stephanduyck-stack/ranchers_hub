@@ -43,8 +43,10 @@
   <div class="col-lg-4"><div class="rf-card p-3 h-100">
     <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Best products</h2>
     <table class="table table-sm align-middle mb-0"><tbody>
-    {% for name, val in top_products %}
-      <tr><td class="small fw-semibold">{{ loop.index }}. {{ name }}</td><td class="text-end money">{{ ugx(val) }}</td></tr>
+    {% for name, val, qty in top_products %}
+      <tr><td class="small fw-semibold">{{ loop.index }}. {{ name }}</td>
+        <td class="text-end small text-muted">{{ '{:,.0f}'.format(qty) }}</td>
+        <td class="text-end money">{{ ugx(val) }}</td></tr>
     {% endfor %}
     </tbody></table></div></div>
   <div class="col-lg-4"><div class="rf-card p-3 h-100">

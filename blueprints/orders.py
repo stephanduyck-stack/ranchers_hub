@@ -40,6 +40,15 @@ def _visible_orders():
     return [o for o in orders if o.customer_id in assigned]
 
 
+
+def _can_amend():
+    """Who may change an order's content or lifecycle before fulfilment:
+    creators (reps and anyone with create_offers_orders) and acceptors
+    (order managers, managers, admins). Fulfilment and dispatch view
+    pre-acceptance orders read-only (21 Jul 2026)."""
+    from services.permissions import has_perm
+    return has_perm(current_user, "create_offers_orders") or current_user.can_accept_orders
+
 def _get_order(order_id):
     o = db.session.get(SalesOrder, order_id)
     if o is None:
@@ -87,21 +96,49 @@ def new():
     if request.method == "POST":
         customer_id = request.form.get("customer_id", type=int)
         source_id = request.form.get("source_id", type=int)
-        if customer_id is None or source_id is None:
-            flash("Choose a customer and a pricelist.", "danger")
+        if customer_id is None:
+            flash("Choose a customer.", "danger")
             return render_template("orders/new.html", customers=customers,
                                    lists=lists, alloc_map=alloc_map), 400
         customer = db.session.get(Customer, customer_id)
         if customer is None:
             abort(404)
         assert_can_see_customer(current_user, customer)
-        src = db.session.get(Pricelist, source_id)
-        if src is None:
-            abort(404)
-        if not is_allowed(current_user, customer, src):
-            flash("That pricelist is not allocated to this customer.", "danger")
-            return render_template("orders/new.html", customers=customers,
-                                   lists=lists, alloc_map=alloc_map)
+        auto_src = False
+        if source_id:
+            src = db.session.get(Pricelist, source_id)
+            if src is None:
+                abort(404)
+            if not is_allowed(current_user, customer, src):
+                flash("That pricelist is not allocated to this customer.", "danger")
+                return render_template("orders/new.html", customers=customers,
+                                       lists=lists, alloc_map=alloc_map)
+        else:
+            # 22 Jul 2026: no pricelist choice needed — the order draws from
+            # ALL the customer's assigned lists. A choice is only forced when
+            # the lists split by currency or VAT treatment (e.g. a local UGX
+            # list next to a USD export list).
+            from services.allocation import allowed_pricelists_for
+            cand = [p for p in allowed_pricelists_for(customer)
+                    if can_see_customer_pricelist(current_user, p)]
+            if not cand:
+                flash("No pricelist is allocated to this customer yet.", "danger")
+                return render_template("orders/new.html", customers=customers,
+                                       lists=lists, alloc_map=alloc_map)
+            groups = {}
+            for p in cand:
+                groups.setdefault((p.currency,) + tuple(order_vat.derive_vat(p, customer)),
+                                  []).append(p)
+            if len(groups) > 1:
+                flash(f"{customer.name} carries pricelists with different "
+                      f"currencies or VAT treatments (e.g. local and USD "
+                      f"export). Pick which one this order uses.", "warning")
+                return render_template("orders/new.html", customers=customers,
+                                       lists=lists, alloc_map=alloc_map)
+            grp = next(iter(groups.values()))
+            # the customer's own list leads; the grid spans the rest anyway
+            src = next((p for p in grp if p.is_customer), grp[0])
+            auto_src = True
         # H4: never let an order be opened for a blocked account.
         if customer.account_status == "blocked" and not current_user.is_admin:
             flash(f"{customer.name}'s account is BLOCKED "
@@ -109,7 +146,7 @@ def new():
                   f"An admin must clear it before an order can be placed.", "danger")
             return render_template("orders/new.html", customers=customers,
                                    lists=lists, alloc_map=alloc_map)
-        ccy = request.form.get("currency", "UGX")
+        ccy = src.currency if auto_src else request.form.get("currency", "UGX")
         # VAT and market are derived server-side (H2/H3/M9): market comes from the
         # customer/pricelist, never from the form; VAT follows the pricelist flag.
         vat_applicable, vat_rate = order_vat.derive_vat(src, customer)
@@ -150,14 +187,38 @@ def new():
 @login_required
 def detail(order_id):
     order = _get_order(order_id)
+    # 22 Jul 2026: a draft opens straight into the fill-in grid — the same
+    # view the customer gets, all items listed with the search bar on top.
+    # ?classic=1 reaches the classic detail page (line editor, place button).
+    if (order.status == "draft" and _can_amend() and order.source_pricelist
+            and request.args.get("classic") != "1"):
+        return redirect(url_for("orders.fill", order_id=order.id))
     drivers = []
     if current_user.can_dispatch:
         from models import User
         drivers = db.session.scalars(
             db.select(User).filter_by(role="delivery", is_active=True)
             .order_by(User.full_name)).all()
+    # Credit-limit headroom for the accept window (acceptors, pre-acceptance).
+    credit_info = None
+    if current_user.can_accept_orders and order.status in ("submitted", "placed") \
+            and ((order.customer.credit_limit_ugx or 0) > 0
+                 or (order.customer.credit_days or 0) > 0):
+        from services import credit as credit_svc
+        lim = order.customer.credit_limit_ugx or 0
+        dlim = order.customer.credit_days or 0
+        out = credit_svc.outstanding_ugx(order.customer)
+        tot = credit_svc.order_total_ugx(order)
+        age = credit_svc.oldest_unpaid_days(order.customer)
+        credit_info = {"limit": lim, "out": out, "total": tot,
+                       "days": dlim, "age": age,
+                       "over": lim > 0 and (out >= lim or out + tot > lim),
+                       "overdue": dlim > 0 and age is not None and age > dlim,
+                       "released": bool(order.credit_override_at)}
     return render_template("orders/detail.html", order=order, today=date.today(),
+                           credit_info=credit_info,
                            can_fulfill=current_user.can_fulfill,
+                           can_amend=_can_amend(),
                            is_acceptor=current_user.can_accept_orders, drivers=drivers,
                            can_decide_bo=_can_decide_backorder(current_user))
 
@@ -167,33 +228,96 @@ def detail(order_id):
 def search_products(order_id):
     order = _get_order(order_id)
     q = (request.args.get("q") or "").strip().lower()
-    src = order.source_pricelist
+    from services.allocation import combinable_lists
     out, seen = [], set()
-    for line in src.lines:
-        p = line.product
-        if p.id in seen:
-            continue
-        if q and q not in p.article_no.lower() and q not in (p.description or "").lower():
-            continue
-        seen.add(p.id)
-        tiers = [{"key": t.key, "label": t.label,
-                  "price": (float(line.price_for(t.key)) if line.price_for(t.key) is not None else None)}
-                 for t in src.tiers]
-        out.append({"line_id": line.id, "article_no": p.article_no,
-                    "description": p.description,
-                    "pack_size": line.pack_size or p.pack_size or "",
-                    "stock": (p.stock_on_hand or 0), "uom": p.unit_of_measure or "",
-                    "currency": src.currency, "tiers": tiers})
+    lists = combinable_lists(order)
+    for src in lists:
+        for line in src.lines:
+            p = line.product
+            if p.id in seen:
+                continue
+            if q and q not in p.article_no.lower() and q not in (p.description or "").lower():
+                continue
+            seen.add(p.id)
+            tiers = [{"key": t.key, "label": t.label,
+                      "price": (float(line.price_for(t.key)) if line.price_for(t.key) is not None else None)}
+                     for t in src.tiers]
+            out.append({"line_id": line.id, "article_no": p.article_no,
+                        "description": p.description
+                        + (f"  [{src.name}]" if len(lists) > 1 else ""),
+                        "pack_size": line.pack_size or p.pack_size or "",
+                        "stock": (p.stock_on_hand or 0), "uom": p.unit_of_measure or "",
+                        "currency": src.currency, "tiers": tiers})
+            if len(out) >= 40:
+                break
         if len(out) >= 40:
             break
     return jsonify(results=out)
+
+
+@bp.route("/<int:order_id>/fill", methods=["GET", "POST"])
+@login_required
+def fill(order_id):
+    """Staff quantity grid (22 Jul 2026): the whole pricelist with a quantity
+    box per product and the search bar pinned on top — the same view the
+    customer gets in the portal. Draft orders only; prices come from the
+    list's primary selling tier, exactly as portal orders do."""
+    order = _get_order(order_id)
+    if not _can_amend():
+        abort(403)
+    if order.status != "draft":
+        flash("The fill-in grid works on draft orders; after placing, use the "
+              "line editor on the order page.", "warning")
+        return redirect(url_for("orders.detail", order_id=order.id))
+    src = order.source_pricelist
+    if src is None:
+        flash("This order has no source pricelist — add lines by search instead.", "warning")
+        return redirect(url_for("orders.detail", order_id=order.id))
+    from blueprints.portal import _primary_tier, _apply_quantities
+    if request.method == "POST":
+        viol = _apply_quantities(order, request.form)
+        if viol:
+            db.session.rollback()
+            flash("These quantities must be full boxes — " + "; ".join(viol[:6])
+                  + (" …" if len(viol) > 6 else "")
+                  + ". Order in multiples of the box size.", "danger")
+            return redirect(url_for("orders.fill", order_id=order.id))
+        db.session.commit()
+        log("order_fill_grid", "sales_order", order.id,
+            detail=f"{order.number} quantities saved from the fill grid")
+        flash("Quantities saved.", "success")
+        if request.form.get("stay") == "1":
+            return redirect(url_for("orders.fill", order_id=order.id))
+        return redirect(url_for("orders.detail", order_id=order.id, classic=1))
+    from services.allocation import combinable_lists
+    qty_by_product = {l.product_id: l.quantity for l in order.lines}
+    rows, seen = [], set()
+    lists = combinable_lists(order)
+    for src in lists:
+        tier = _primary_tier(src)
+        for line in src.lines:
+            p = line.product
+            if not p.is_active or p.id in seen:
+                continue
+            price = effective_line_price(line, tier.key) if tier else {"amount": None}
+            if price["amount"] is None:
+                continue
+            seen.add(p.id)
+            rows.append({"line": line, "product": p,
+                         "price": float(price["amount"]),
+                         "qty": qty_by_product.get(p.id, ""),
+                         "box": float(line.box_small) if (line.box_small and not src.allow_small_orders) else None,
+                         "list_name": src.name if len(lists) > 1 else None})
+    return render_template("orders/fill.html", order=order, rows=rows)
 
 
 @bp.route("/<int:order_id>/line/add", methods=["POST"])
 @login_required
 def add_line(order_id):
     order = _get_order(order_id)
-    if not order.is_amendable:
+    if not _can_amend():
+        abort(403)
+    if not order.is_lines_amendable:
         flash("This order can no longer be amended.", "warning")
         return redirect(url_for("orders.detail", order_id=order.id))
     line_id = request.form.get("line_id", type=int)
@@ -298,7 +422,9 @@ def add_line(order_id):
 @login_required
 def remove_line(order_id, line_id):
     order = _get_order(order_id)
-    if not order.is_amendable:
+    if not _can_amend():
+        abort(403)
+    if not order.is_lines_amendable:
         flash("This order can no longer be amended.", "warning")
         return redirect(url_for("orders.detail", order_id=order.id))
     line = db.session.get(SalesOrderLine, line_id)
@@ -314,7 +440,9 @@ def remove_line(order_id, line_id):
 @login_required
 def update_line_qty(order_id, line_id):
     order = _get_order(order_id)
-    if not order.is_amendable:
+    if not _can_amend():
+        abort(403)
+    if not order.is_lines_amendable:
         flash("This order can no longer be amended.", "warning")
         return redirect(url_for("orders.detail", order_id=order.id))
     line = db.session.get(SalesOrderLine, line_id)
@@ -325,6 +453,22 @@ def update_line_qty(order_id, line_id):
     except ValueError:
         flash("Quantity must be a number.", "danger")
         return redirect(url_for("orders.detail", order_id=order.id))
+    # 22 Jul 2026: box sizes are minimum order quantities (unless the list
+    # allows small orders) — the classic editor obeys the same rule.
+    if qty > 0 and line.product_id:
+        from services.allocation import combinable_lists
+        for _src in combinable_lists(order):
+            _pl = next((x for x in _src.lines if x.product_id == line.product_id), None)
+            if _pl is None:
+                continue
+            _box = float(_pl.box_small or 0)
+            if not _src.allow_small_orders and _box > 0:
+                _m = qty / _box
+                if qty + 1e-9 < _box or abs(_m - round(_m)) > 1e-6:
+                    flash(f"{line.article_no}: order in full boxes of {_box:g} "
+                          f"(minimum order quantity).", "danger")
+                    return redirect(url_for("orders.detail", order_id=order.id))
+            break
     if qty <= 0:
         db.session.delete(line)
         log("order_edit", "sales_order", order.id, detail=f"removed {line.article_no} (qty 0)")
@@ -342,6 +486,8 @@ def update_line_qty(order_id, line_id):
 @login_required
 def update_details(order_id):
     order = _get_order(order_id)
+    if not _can_amend():
+        abort(403)
     # M12: do not rewrite delivery date/address/PO once the order is past amendment.
     if not order.is_amendable:
         flash("This order can no longer be amended.", "warning")
@@ -361,6 +507,8 @@ def update_details(order_id):
 @login_required
 def place(order_id):
     order = _get_order(order_id)
+    if not _can_amend():
+        abort(403)
     if order.status != "draft":
         abort(400)
     if not order.lines:
@@ -377,6 +525,10 @@ def place(order_id):
     order.placed_at = datetime.utcnow()
     log("order_place", "sales_order", order.id,
         detail=f"{order.number} placed; rate {order.exchange_rate_value or 'n/a'}")
+    # Finance gate: an account without finance credit clearance raises a
+    # credit alert to CFO/finance manager (blocked accounts were refused above).
+    from services import credit
+    credit.raise_alert(order)
     db.session.commit()
     flash(f"Order {order.number} placed and locked.", "success")
     return redirect(url_for("orders.detail", order_id=order.id))
@@ -472,6 +624,46 @@ def delivery_note(order_id):
                      download_name=f"{order.dnote_number or order.number}.pdf")
 
 
+@bp.route("/<int:order_id>/picking-slip")
+@login_required
+def picking_slip(order_id):
+    """Warehouse picking slip: available from acceptance onward to acceptors
+    and fulfilment. Empty Picked and Verified columns for pen-and-paper."""
+    from io import BytesIO
+    from flask import send_file
+    if not (current_user.can_fulfill or current_user.can_accept_orders):
+        abort(403)
+    order = _get_order(order_id)
+    if order.accepted_at is None and order.status not in (
+            "in_fulfillment", "pending", "ready_for_dispatch",
+            "out_for_delivery", "dispatched", "delivered", "fulfilled"):
+        flash("The picking slip exists once the order is accepted.", "warning")
+        return redirect(url_for("orders.detail", order_id=order.id))
+    pdf = exports.picking_slip_to_pdf(order)
+    inline = request.args.get("view") == "1"
+    return send_file(BytesIO(pdf), mimetype="application/pdf",
+                     as_attachment=not inline,
+                     download_name=f"PICK_{order.number}.pdf")
+
+
+@bp.route("/<int:order_id>/invoice")
+@login_required
+def invoice_print(order_id):
+    """The fiscal invoice behind a completed order, printable by acceptors and
+    fulfilment without opening the accounting module."""
+    if not (current_user.can_fulfill or current_user.can_accept_orders):
+        abort(403)
+    order = _get_order(order_id)
+    from services.sale_posting import invoice_for_order
+    inv = invoice_for_order(order)
+    if inv is None:
+        flash("No invoice exists for this order (internal transfer, or not "
+              "yet completed).", "warning")
+        return redirect(url_for("orders.detail", order_id=order.id))
+    return render_template("accounting/invoice_view.html", invoice=inv,
+                           can_credit=False)
+
+
 @bp.route("/<int:order_id>/pod")
 @login_required
 def pod(order_id):
@@ -502,13 +694,30 @@ def stock_review(order_id):
         abort(400)
 
     cust = order.customer
-    # Hard block on a blocked account (admin may override).
-    if cust and cust.account_status == "blocked" and not current_user.is_admin:
-        flash(f"{cust.name}'s account is BLOCKED ({cust.account_note or 'no reason given'}). "
-              f"An admin must clear it before this order is accepted.", "danger")
-        return redirect(url_for("orders.detail", order_id=order.id))
-    if request.form.get("credit_checked") != "1":
-        flash("Tick that you checked the customer's account before accepting.", "warning")
+    # Finance gate (20 Jul 2026): the order manager no longer self-declares
+    # the credit check. Acceptance requires the finance credit clearance tick
+    # on the customer profile and an unblocked account. A gated order raises
+    # a credit alert to CFO/finance manager (once) and stays waiting.
+    from services import credit
+    ok, reason = credit.gate(cust, order=order)
+    # Over-limit refuses for EVERYONE — only a CEO/CFO/finance-manager
+    # release from the Credit alerts queue lets the order through. The
+    # admin bypass applies to manual blocks/clearance only.
+    if not ok and (reason == "over_limit" or not current_user.is_admin):
+        credit.raise_alert(order)
+        db.session.commit()
+        if reason == "over_limit":
+            why = (f"insufficient credit — outstanding UGX "
+                   f"{credit.outstanding_ugx(cust):,}, limit UGX "
+                   f"{(cust.credit_limit_ugx or 0):,}, this order UGX "
+                   f"{credit.order_total_ugx(order):,}")
+        elif reason == "blocked":
+            why = "account BLOCKED"
+        else:
+            why = "no finance credit clearance on the customer profile"
+        flash(f"Cannot accept {order.number}: {why} "
+              f"({cust.account_note or 'no note'}). Finance has been alerted "
+              f"and decides in the Credit alerts queue.", "danger")
         return redirect(url_for("orders.detail", order_id=order.id))
 
     oos_lines = []
@@ -541,11 +750,13 @@ def stock_review(order_id):
             body += f"\n\n{note}"
         body += ("\n\nThe items we have in stock are being prepared for delivery now. "
                  "We will follow up on the balance.")
-        db.session.add(Message(
+        m = Message(
             customer_id=order.customer_id, sender_type="staff",
             sender_user_id=current_user.id,
             sender_name=getattr(current_user, "full_name", "Sales team"),
-            body=body, read_by_customer=False, read_by_staff=True))
+            body=body, order_id=order.id,
+            read_by_customer=False, read_by_staff=True)
+        db.session.add(m)
 
     # accept -> fulfilment
     order.status = "in_fulfillment"
@@ -558,18 +769,21 @@ def stock_review(order_id):
     # back-order route for out-of-stock items
     bo = None
     bo_action = request.form.get("oos_action", "none")
+    if not (cust and cust.backorders_allowed):
+        bo_action = "none"   # profile says no back orders, ever
     if oos_lines and bo_action in ("create_now", "ask_customer"):
         state = "confirmed" if bo_action == "create_now" else "proposed"
         bo = _build_backorder(order, confirm_state=state)
         if bo is not None and bo_action == "ask_customer":
-            db.session.add(Message(
+            m = Message(
                 customer_id=order.customer_id, sender_type="staff",
                 sender_user_id=current_user.id,
                 sender_name=getattr(current_user, "full_name", "Sales team"),
                 body=(f"We have raised a proposed back order {bo.number} for the "
                       f"out-of-stock items on {order.number}. Please confirm in your "
                       f"portal whether you want us to deliver these when back in stock, "
-                      f"or decline.")))
+                      f"or decline."))
+            db.session.add(m)
 
     log("order_accept", "sales_order", order.id,
         detail=(f"{order.number} accepted by {current_user.full_name}; "
@@ -584,7 +798,8 @@ def stock_review(order_id):
             msg += (f" Back order {bo.number} "
                     + ("created." if bo_action == "create_now" else "proposed to the customer."))
     flash(msg, "success")
-    return redirect(url_for("orders.detail", order_id=order.id))
+    # 21 Jul 2026: acceptance hands the store a paper picking slip.
+    return redirect(url_for("orders.detail", order_id=order.id, print="pickslip"))
 
 
 @bp.route("/<int:order_id>/hold", methods=["POST"])
@@ -621,8 +836,8 @@ def resume(order_id):
 def set_availability(order_id, line_id):
     _require_fulfiller()
     order = _get_order(order_id)
-    if order.status not in ("placed", "in_fulfillment", "pending"):
-        abort(400)
+    if order.status not in ("in_fulfillment", "pending"):
+        abort(400)   # 21 Jul 2026: no availability marking before acceptance
     line = db.session.get(SalesOrderLine, line_id)
     if line is None or line.order_id != order.id:
         abort(404)
@@ -665,6 +880,30 @@ def save_fulfilled(order_id):
             log("order_qty", "sales_order", order.id, field=l.article_no,
                 old_value=old, new_value=val, detail=f"{order.number} delivered qty")
             changed += 1
+    # Stock guard at entry (21 Jul 2026): the Fulfilled quantity is capped by
+    # the stock on hand, in the product's own unit (kg items are stocked in
+    # kg, piece items in pieces — the stock unit IS the selling unit). The
+    # save is refused with the offending lines named, so the officer corrects
+    # immediately instead of failing later at Complete.
+    from services.features import feature_on
+    if feature_on("stock_guard"):
+        need = {}
+        for l in order.lines:
+            if l.product_id and (l.fulfilled_qty or 0) > 0 and l.availability != "out_of_stock":
+                need.setdefault(l.product, 0)
+                need[l.product] += l.fulfilled_qty or 0
+        short = [(p, q) for p, q in need.items()
+                 if q > (p.stock_on_hand or 0) + 1e-9]
+        if short:
+            items = "; ".join(
+                f"{p.article_no} {p.description}: entered {q:g}, on hand "
+                f"{(p.stock_on_hand or 0):g} {p.unit_of_measure or ''}".rstrip()
+                for p, q in short)
+            db.session.rollback()
+            flash(f"Not saved — more than the stock on hand: {items}. "
+                  f"Enter at most what the store holds, or mark the line out "
+                  f"of stock; only the store manager can add stock.", "danger")
+            return redirect(url_for("orders.detail", order_id=order.id))
     db.session.commit()
     flash(f"Saved delivered quantities ({changed} change(s)).", "success")
     return redirect(url_for("orders.detail", order_id=order.id))
@@ -715,7 +954,33 @@ def complete(order_id):
             not_delivered += 1
         elif l.fulfilled_qty is None:
             l.fulfilled_qty = l.quantity
-    opt_out = request.form.get("no_backorder") == "1"
+    # Stock guard (21 Jul 2026): fulfilment cannot ship more than the store
+    # holds. Only the store manager changes stock quantities; the fulfilment
+    # officer's options on a short line are reducing the To deliver quantity
+    # (shortfall goes to back order) or marking the line out of stock. The
+    # guard pauses from Admin > Features while opening balances are loaded.
+    from services.features import feature_on
+    if feature_on("stock_guard") and not order.stock_deducted:
+        need = {}
+        for l in order.lines:
+            if l.product_id and (l.fulfilled_qty or 0) > 0:
+                need.setdefault(l.product, 0)
+                need[l.product] += l.fulfilled_qty or 0
+        short = [(p, q, p.stock_on_hand or 0) for p, q in need.items()
+                 if q > (p.stock_on_hand or 0) + 1e-9]
+        if short:
+            items = "; ".join(f"{p.article_no} {p.description}: picking {q:g}, "
+                              f"on hand {soh:g}" for p, q, soh in short)
+            db.session.rollback()
+            flash(f"Cannot complete {order.number} — more than the stock on "
+                  f"hand: {items}. Reduce the Fulfilled quantity or mark the "
+                  f"line out of stock; only the store manager can add stock.",
+                  "danger")
+            return redirect(url_for("orders.detail", order_id=order.id))
+    # Back-order policy comes from the customer profile (21 Jul 2026):
+    # allowed means shortfalls raise a CONFIRMED back order automatically;
+    # not allowed means none is ever created and the balance is dropped.
+    bo_allowed = bool(order.customer and order.customer.backorders_allowed)
 
     # Safeguard: nothing was in stock to deliver. Don't let the order sit as an
     # active/dispatched order with an empty delivery — cancel it and (unless the
@@ -724,18 +989,20 @@ def complete(order_id):
     if not any_delivered:
         order.status = "cancelled"
         order.fulfilled_at = datetime.utcnow()
-        bo = _build_backorder(order, confirm_state="proposed") if not opt_out else None
+        bo = _build_backorder(order, confirm_state="confirmed") if bo_allowed else None
+        m = None
         if bo is not None:
             from models import Message
-            db.session.add(Message(
+            m = Message(
                 customer_id=order.customer_id, sender_type="staff",
                 sender_user_id=current_user.id,
                 sender_name=getattr(current_user, "full_name", "Sales team"),
                 body=(f"Update on your order {order.number}: the items were out of "
                       f"stock, so nothing could be delivered. We raised back order "
-                      f"{bo.number} for the full quantity — confirm in your portal "
-                      f"that you want it when back in stock, or let your rep know."),
-                order_id=bo.id, read_by_customer=False, read_by_staff=True))
+                      f"{bo.number} for the full quantity and will deliver as soon "
+                      f"as the items are back in stock."),
+                order_id=bo.id, read_by_customer=False, read_by_staff=True)
+            db.session.add(m)
         log("order_fulfill", "sales_order", order.id,
             detail=f"{order.number} nothing in stock -> cancelled"
                    + (f", back order {bo.number}" if bo else ""))
@@ -783,6 +1050,12 @@ def complete(order_id):
             flash(f"Internal shop order: stock transfer {transfer.transfer_no} "
                   f"posted to {transfer.to_location.name} — no invoice, the "
                   "sale happens at the shop till.", "info")
+        elif feature_on("invoice_after_delivery"):
+            # Invoice-after-delivery (31 Jul 2026): nothing is invoiced at
+            # fulfilment. The truck leaves on the delivery note alone; the
+            # invoicing clerk bills the quantities the customer accepted on
+            # the signed note, from the invoicing queue, after delivery.
+            invoice = None
         else:
             # A posting failure stops the completion — an order must never
             # ship with no invoice behind it. Fiscalization to URA happens
@@ -800,26 +1073,30 @@ def complete(order_id):
 
     # Automatically raise a back order for any undelivered balance — short
     # quantities or items found physically out of stock during fulfilment —
-    # unless the officer explicitly opts out. It is created as 'proposed': the
-    # customer is alerted, and either the customer (portal) or a staff member
-    # (order manager, telesales, rep) can confirm or decline it.
-    make_bo = bool(order.outstanding_items()) and not opt_out
-    bo = _build_backorder(order, confirm_state="proposed") if make_bo else None
+    # when the customer profile allows back orders. The customer consented on
+    # the profile, so it is created CONFIRMED (no per-order ask). Customers
+    # whose profile says no never get one; the balance is dropped.
+    make_bo = bool(order.outstanding_items()) and bo_allowed
+    bo = _build_backorder(order, confirm_state="confirmed") if make_bo else None
+    bo_msg = None
     if bo is not None:
         from models import Message
-        db.session.add(Message(
+        bo_msg = Message(
             customer_id=order.customer_id, sender_type="staff",
             sender_user_id=current_user.id,
             sender_name=getattr(current_user, "full_name", "Sales team"),
             body=(f"Update on your order {order.number}: some items could not be "
                   f"delivered in full, so we raised back order {bo.number} for the "
-                  f"balance. Confirm in your portal that you want it delivered when "
-                  f"back in stock, or let your rep know — we can confirm it for you."),
-            read_by_customer=False, read_by_staff=True))
+                  f"balance. We will deliver it as soon as the items are back in "
+                  f"stock."),
+            read_by_customer=False, read_by_staff=True)
+        db.session.add(bo_msg)
     db.session.commit()
 
     # Fiscalize AFTER commit: the sale is safe in the books whatever URA says.
     inv_note = ""
+    deferred = (invoice is None and feature_on("invoice_after_delivery")
+                and not (order.customer and order.customer.internal_location_id))
     if invoice is not None:
         from services import efris
         if efris.try_fiscalize(invoice):
@@ -828,17 +1105,23 @@ def complete(order_id):
         else:
             inv_note = (f" Invoice {invoice.invoice_no} posted; fiscalization "
                         f"pending — queued for retry.")
+    elif deferred:
+        inv_note = (" No invoice yet: the invoicing clerk bills the accepted "
+                    "quantities from the signed delivery note after delivery.")
+    print_mode = "dnote" if deferred else "pack"
 
     if bo is not None:
         flash(f"Fulfilment complete. Delivery note {order.dnote_number} ready. "
               f"Back order {bo.number} raised and the customer alerted — confirm it "
               f"on its page once the customer agrees (or they can confirm in the portal)."
               + inv_note, "success")
-        return redirect(url_for("orders.detail", order_id=order.id))
+        return redirect(url_for("orders.detail", order_id=order.id, print=print_mode))
     flash(f"Fulfilment complete. Delivery note {order.dnote_number} ready for dispatch."
           + (f" {not_delivered} item(s) not delivered." if not_delivered else "")
           + inv_note, "success")
-    return redirect(url_for("orders.detail", order_id=order.id))
+    # 21 Jul 2026: completion prints the delivery note (and the invoice when
+    # the sale was invoiced at fulfilment).
+    return redirect(url_for("orders.detail", order_id=order.id, print=print_mode))
 
 
 def _can_decide_backorder(user):
@@ -902,6 +1185,8 @@ def feedback_ack(order_id):
 @login_required
 def cancel(order_id):
     order = _get_order(order_id)
+    if not _can_amend():
+        abort(403)
     # C2: a delivered order must not be cancellable (it would vanish from revenue
     # while its stock deduction stands).
     if order.status in ("fulfilled", "delivered", "cancelled"):
@@ -988,6 +1273,10 @@ def _build_backorder(order, confirm_state="confirmed"):
 def create_backorder(order_id):
     _require_acceptor()
     order = _get_order(order_id)
+    if not (order.customer and order.customer.backorders_allowed):
+        flash(f"{order.customer.name} does not accept back orders "
+              f"(set on the customer profile).", "warning")
+        return redirect(url_for("orders.detail", order_id=order.id))
     if order.backorder is not None:
         flash(f"A back order already exists: {order.backorder.number}.", "warning")
         return redirect(url_for("orders.detail", order_id=order.backorder.id))

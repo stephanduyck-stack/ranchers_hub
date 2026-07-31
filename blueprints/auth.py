@@ -13,6 +13,28 @@ from services.audit import log
 
 bp = Blueprint("auth", __name__)
 
+# Endpoints reachable while a forced password change is pending.
+_FORCE_PW_EXEMPT = {"auth.account", "auth.login", "auth.logout",
+                    "auth.login_image", "auth.activate", "portal.account",
+                    "static"}
+
+
+@bp.before_app_request
+def _force_password_change():
+    """Accounts provisioned with a temporary password (new customer/distributor
+    portal logins) go nowhere until they set their own password."""
+    if not current_user.is_authenticated:
+        return None
+    if not getattr(current_user, "must_change_password", False):
+        return None
+    ep = request.endpoint or ""
+    if ep in _FORCE_PW_EXEMPT or ep == "static" or ep.endswith(".static"):
+        return None
+    flash("Welcome. Set your own password to continue.", "warning")
+    target = ("portal.account" if getattr(current_user, "is_customer_user", False)
+              else "auth.account")
+    return redirect(url_for(target))
+
 
 def _safe_next(nxt):
     """Return nxt only if it is a relative, same-site path; else None.
@@ -100,6 +122,129 @@ def login_image():
     return send_file(path)
 
 
+def _send_reset_email(u):
+    """Best-effort reset email to the user's email (portal logins fall back
+    to the linked customer's address). Returns (ok, reason)."""
+    import os
+    from flask import current_app
+    from services import comms
+    from services import settings as settings_svc
+    from services.security import make_reset_token
+    from services.email_templates import password_reset_html
+    email = (u.email or "").strip()
+    if not email and u.customer:
+        email = (u.customer.email or "").strip()
+    if not email:
+        return (False, "no email address on file")
+    company = settings_svc.get("company_name") or "Ranchers Finest"
+    reset_url = (request.url_root.rstrip("/")
+                 + url_for("auth.reset_password", token=make_reset_token(u)))
+    body = (
+        f"We received a request to reset the password for the account "
+        f"{u.username} on the {company} Customer Portal.\n"
+        f"\n"
+        f"Choose a new password here (the link works for 2 hours, once):\n"
+        f"{reset_url}\n"
+        f"\n"
+        f"Didn't ask for this? Ignore this email — your password stays as "
+        f"it is.\n"
+        f"\n"
+        f"{company}\n"
+    )
+    html = password_reset_html(company, reset_url, u.username)
+    logo = os.path.join(current_app.static_folder, "img", "ranchers-logo.png")
+    ok, reason = comms.send_email(email, f"Reset your {company} portal password",
+                                  body, html=html,
+                                  inline_images={"rflogo": logo})
+    log("pw_reset_email", "user", u.id,
+        detail=f"reset email to {email}: {'sent' if ok else reason}",
+        commit=True)
+    return ok, reason
+
+
+@bp.route("/forgot", methods=["GET", "POST"])
+def forgot():
+    """Forgot-password request. The response is identical whether the account
+    exists or not, so the form cannot be used to enumerate usernames."""
+    if request.method == "POST":
+        needle = (request.form.get("username") or "").strip()
+        if needle:
+            u = db.session.scalar(db.select(User).filter(
+                db.func.lower(User.username) == needle.lower()))
+            if u is None and "@" in needle:
+                u = db.session.scalar(db.select(User).filter(
+                    db.func.lower(User.email) == needle.lower()))
+            if u is not None and u.is_active:
+                _send_reset_email(u)
+        # Full confirmation page (not a toast): identical whether the account
+        # exists or not, so the form stays enumeration-safe.
+        return render_template("forgot_sent.html")
+    return render_template("forgot.html")
+
+
+@bp.route("/reset/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    """Set a new password from the emailed reset link (2 hours, single-use)."""
+    from services.security import verify_reset_token
+    u = verify_reset_token(token)
+    if u is None:
+        flash("This reset link is no longer valid. Request a new one below.",
+              "warning")
+        return redirect(url_for("auth.forgot"))
+    if request.method == "POST":
+        new = request.form.get("new_password") or ""
+        confirm = request.form.get("confirm_password") or ""
+        if len(new) < 8:
+            flash("Password must be at least 8 characters.", "danger")
+        elif new != confirm:
+            flash("Passwords do not match.", "danger")
+        else:
+            u.password_hash = hash_password(new)
+            u.must_change_password = False
+            u.failed_attempts = 0
+            u.locked_until = None
+            db.session.commit()
+            log("password_change", "user", u.id,
+                detail=f"{u.username} reset via emailed link", commit=True)
+            flash("Password set. Sign in with your new password.", "success")
+            return redirect(url_for("auth.login"))
+    return render_template("reset.html", user=u, token=token)
+
+
+@bp.route("/activate/<token>", methods=["GET", "POST"])
+def activate(token):
+    """Set-your-password page reached from the welcome email's activation
+    link. No credentials travel by mail: the signed token (72h, single-use —
+    it binds to the current password hash) identifies the account."""
+    from services.security import verify_activation_token
+    u = verify_activation_token(token)
+    if u is None:
+        flash("This activation link is no longer valid. Ask us for a new "
+              "welcome email, or sign in if you already set your password.",
+              "warning")
+        return redirect(url_for("auth.login"))
+    if request.method == "POST":
+        new = request.form.get("new_password") or ""
+        confirm = request.form.get("confirm_password") or ""
+        if len(new) < 8:
+            flash("Password must be at least 8 characters.", "danger")
+        elif new != confirm:
+            flash("Passwords do not match.", "danger")
+        else:
+            u.password_hash = hash_password(new)
+            u.must_change_password = False
+            u.failed_attempts = 0
+            u.locked_until = None
+            u.last_login = datetime.utcnow()
+            db.session.commit()
+            log("portal_activate", "user", u.id,
+                detail=f"{u.username} activated via welcome link", commit=True)
+            login_user(u)
+            flash("Welcome! Your password is set.", "success")
+            return redirect(url_for("portal.home"))
+    return render_template("activate.html", user=u, token=token)
+
+
 @bp.route("/logout")
 @login_required
 def logout():
@@ -123,9 +268,15 @@ def account():
         elif new != confirm:
             flash("New passwords do not match.", "danger")
         else:
+            was_forced = bool(getattr(current_user, "must_change_password", False))
             current_user.password_hash = hash_password(new)
+            current_user.must_change_password = False
             db.session.commit()
             log("password_change", "user", current_user.id, commit=True)
             flash("Password updated.", "success")
+            if was_forced:
+                return redirect(url_for("portal.home")
+                                if current_user.is_customer_user
+                                else url_for("dashboard.home"))
         return redirect(url_for("auth.account"))
     return render_template("account.html")

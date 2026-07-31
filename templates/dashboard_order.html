@@ -3,7 +3,7 @@
 {% macro ordstatus(s) %}
   {% if s=='submitted' %}<span class="badge" style="background:#ED1C24">to accept</span>
   {% elif s=='placed' %}<span class="badge bg-dark">placed</span>
-  {% elif s=='in_fulfillment' %}<span class="badge" style="background:#F47A21">in fulfilment</span>
+  {% elif s=='in_fulfillment' %}<span class="badge" style="background:#F47A21">to deliver</span>
   {% elif s=='pending' %}<span class="badge badge-warn">pending stock</span>
   {% elif s=='ready_for_dispatch' %}<span class="badge" style="background:#6E7149">ready</span>
   {% elif s=='out_for_delivery' %}<span class="badge" style="background:#2E7D32">out for delivery</span>
@@ -88,7 +88,7 @@
 <!-- OPERATIONAL KPI TILES -->
 <div class="rf-kpis mb-3" style="grid-template-columns:repeat(6,1fr)">
   <a href="{{ url_for('orders.index', status='submitted') }}"><div class="rf-kpi"><div class="num" style="color:#ED1C24">{{ to_confirm|length }}</div><div class="lbl">To accept</div></div></a>
-  <a href="{{ url_for('orders.index', status='in_fulfillment') }}"><div class="rf-kpi"><div class="num" style="color:#F47A21">{{ in_prep|length }}</div><div class="lbl">In fulfilment</div></div></a>
+  <a href="{{ url_for('orders.index', status='in_fulfillment') }}"><div class="rf-kpi"><div class="num" style="color:#F47A21">{{ in_prep|length }}</div><div class="lbl">To deliver</div></div></a>
   <a href="{{ url_for('orders.index', status='pending') }}"><div class="rf-kpi"><div class="num" style="color:#F9A03F">{{ pending|length }}</div><div class="lbl">Pending stock</div></div></a>
   <a href="{{ url_for('orders.index') }}"><div class="rf-kpi"><div class="num" style="color:#ED1C24">{{ delayed|length }}</div><div class="lbl">Delayed</div></div></a>
   <a href="{{ url_for('orders.index') }}"><div class="rf-kpi"><div class="num" style="color:#F9A03F">{{ proposed_bo|length }}</div><div class="lbl">Back orders to approve</div></div></a>

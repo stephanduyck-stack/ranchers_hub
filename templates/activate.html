@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block heading %}Customer Portal{% endblock %}
+
+{% macro activate_card() %}
+<div class="rf-login-wrap">
+  <div class="rf-login-card">
+    <div class="rf-login-banner" {% if login_image %}style="background-image:linear-gradient(rgba(14,14,14,.35),rgba(14,14,14,.45)), url('{{ url_for('auth.login_image') }}'); background-size:cover; background-position:center;"{% endif %}>
+      <img src="{{ url_for('static', filename='img/ranchers-logo.svg') }}" alt="{{ company_name }}">
+    </div>
+    <div class="rf-login-body">
+      <h1 class="h5 text-center mb-1 rf-head">Welcome to the Customer Portal</h1>
+      <p class="text-center text-muted small mb-3">{{ user.customer.name if user.customer else user.full_name }}</p>
+      <p class="small text-muted">Your username is <code>{{ user.username }}</code>.
+        Choose your password below and you are signed in.</p>
+      <form method="post" action="{{ url_for('auth.activate', token=token) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+          <label class="form-label">Choose a password (min 8)</label>
+          <input class="form-control" type="password" name="new_password" autofocus required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Confirm password</label>
+          <input class="form-control" type="password" name="confirm_password" required>
+        </div>
+        <button class="btn btn-primary w-100">Set password &amp; sign in</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+{# base.html shows 'fullpage' to signed-out visitors and 'content' inside the
+   app shell to signed-in ones. The activation page must work in both — e.g.
+   a staff member testing the link, or a customer already signed in. #}
+{% block fullpage %}{{ activate_card() }}{% endblock %}
+{% block content %}{{ activate_card() }}{% endblock %}

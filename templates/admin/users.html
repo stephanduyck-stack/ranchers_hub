@@ -4,19 +4,39 @@
 {% include "admin/_nav.html" %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h2 class="h6 mb-0">Users &amp; access rights</h2>
+  {% if tab == 'customers' %}
+  <a class="btn btn-primary btn-sm" href="{{ url_for('admin.user_new', kind='customer') }}"><i class="bi bi-plus-lg"></i> New customer login</a>
+  {% elif tab == 'distributors' %}
+  <a class="btn btn-primary btn-sm" href="{{ url_for('admin.user_new', kind='distributor') }}"><i class="bi bi-plus-lg"></i> New distributor login</a>
+  {% else %}
   <a class="btn btn-primary btn-sm" href="{{ url_for('admin.user_new') }}"><i class="bi bi-plus-lg"></i> New user</a>
+  {% endif %}
 </div>
+
+{% macro user_table(rows, portal=False) %}
 <div class="table-responsive rf-card">
 <table class="table table-sm align-middle mb-0">
-  <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Edit right</th><th>Active</th><th>Customers</th><th></th></tr></thead>
+  <thead><tr>
+    <th>Name</th><th>Username</th>
+    {% if portal %}<th>Linked account</th>{% else %}<th>Role</th>{% endif %}
+    <th>Edit right</th><th>Active</th>
+    {% if not portal %}<th>Customers</th>{% endif %}
+    <th></th>
+  </tr></thead>
   <tbody>
-  {% for u in users %}
+  {% for u in rows %}
     <tr>
       <td>{{ u.full_name }}</td><td>{{ u.username }}</td>
+      {% if portal %}
+      <td class="small">{% if u.customer %}<a href="{{ url_for('customers.detail', customer_id=u.customer.id) }}">{{ u.customer.name }}</a>{% set extra = u.portal_customers|length %}{% if extra %} <span class="badge bg-secondary">+{{ extra }} outlet{{ '' if extra == 1 else 's' }}</span>{% endif %}{% else %}<span class="text-danger">not linked</span>{% endif %}</td>
+      {% else %}
       <td class="text-capitalize">{{ u.role }}</td>
+      {% endif %}
       <td>{% if u.may_edit_prices %}<span class="badge" style="background:var(--rf-orange)">yes</span>{% else %}<span class="badge bg-secondary">no</span>{% endif %}</td>
       <td>{% if u.is_active %}<span class="badge badge-ok">active</span>{% else %}<span class="badge bg-secondary">disabled</span>{% endif %}</td>
+      {% if not portal %}
       <td class="small">{% if u.sees_all_customers %}<span class="badge bg-secondary">all customers</span>{% else %}{% set n = u.assigned_customers|length %}{% if n %}<a href="{{ url_for('admin.user_edit', user_id=u.id) }}">{{ n }} customer{{ '' if n == 1 else 's' }}</a>{% else %}—{% endif %}{% endif %}</td>
+      {% endif %}
       <td class="text-end text-nowrap">
         <a class="btn btn-sm btn-outline-secondary py-0 px-1" href="{{ url_for('admin.user_edit', user_id=u.id) }}"><i class="bi bi-pencil"></i></a>
         {% if u.id != current_user.id %}
@@ -26,8 +46,25 @@
         {% endif %}
       </td>
     </tr>
+  {% else %}
+    <tr><td colspan="7" class="text-muted small py-3">No users in this group.</td></tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
+{% endmacro %}
+
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item"><a class="nav-link {{ 'active' if tab == 'internal' }}" href="{{ url_for('admin.users', tab='internal') }}">Internal users <span class="badge bg-secondary">{{ internal|length }}</span></a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if tab == 'customers' }}" href="{{ url_for('admin.users', tab='customers') }}">Customer logins <span class="badge bg-secondary">{{ customer_logins|length }}</span></a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if tab == 'distributors' }}" href="{{ url_for('admin.users', tab='distributors') }}">Distributor logins <span class="badge bg-secondary">{{ distributor_logins|length }}</span></a></li>
+</ul>
+
+{% if tab == 'customers' %}
+  {{ user_table(customer_logins, portal=True) }}
+{% elif tab == 'distributors' %}
+  {{ user_table(distributor_logins, portal=True) }}
+{% else %}
+  {{ user_table(internal) }}
+{% endif %}
 {% endblock %}

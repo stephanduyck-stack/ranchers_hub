@@ -35,13 +35,13 @@ def apply_movement(product, qty_delta, kind, user_id=None, note=None, order_id=N
     """Adjust a product's stock by qty_delta (signed) and log it. Returns the
     movement. Does not commit — the caller commits.
 
-    M16: the on-hand balance is a single number whose unit (kg vs pack) is not
-    reconciled per channel here; a HORECA line is per kg and a supermarket line
-    per pack, both deducted from the same figure. Full unit reconciliation is out
-    of scope. We flag (do not block) when the balance would go negative so a
-    misconfigured product/unit surfaces in the log.
-    TODO: define a stock unit per product and convert line quantity (kg<->pack)
-    before deducting, then decide whether to block on negative on-hand."""
+    Unit convention (decided 21 Jul 2026, replaces the M16 TODO): a product's
+    stock unit IS its selling unit — items sold per kg are stocked in kg,
+    items sold per piece in pieces (product.unit_of_measure). No conversion
+    happens at deduction; order lines and stock speak the same unit. The
+    sales path is blocked from exceeding stock by the stock_guard checks in
+    orders.save_fulfilled and orders.complete; the negative-balance warning
+    below stays as a net for non-sales movements."""
     if product is None or not qty_delta:
         return None
     new_balance = (product.stock_on_hand or 0) + qty_delta

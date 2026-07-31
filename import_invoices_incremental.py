@@ -150,10 +150,42 @@ def run(paths):
                 existing[num] = inv
                 ins += 1
     db.session.commit()
+    reclassify_reversals()
     lo, hi = (min(dates), max(dates)) if dates else (None, None)
     n_match = sum(1 for v in cust_cache.values() if v)
     print(f"Inserted {ins}, updated {upd}, skipped {skipped} (no date). "
           f"Dates {lo} .. {hi}. Customers seen {len(cust_cache)}, matched {n_match}.")
+
+
+def reclassify_reversals():
+    """'Reversed' + its RINV credit note double-subtracts on the dashboards:
+    the original is filtered out AND the negative RINV still counts. The
+    ledger-true basis (Denis's management accounts, reconciled 8 Jul 2026)
+    counts both moves on their own dates so the pair nets out. So: a Reversed
+    original with a matching in-data credit note (same customer, exact
+    opposite untaxed) becomes 'Cancelled' — included in revenue where its
+    RINV offsets it, excluded from receivables. Reversed originals WITHOUT
+    a matching credit note stay 'Reversed' and stay out of revenue. Runs
+    after every header import because Odoo re-sends 'Reversed'."""
+    originals = db.session.scalars(db.select(Invoice).where(
+        Invoice.payment_status == "Reversed",
+        db.not_(Invoice.number.like("RINV%")),
+        Invoice.untaxed.isnot(None))).all()
+    rinvs = db.session.scalars(db.select(Invoice).where(
+        Invoice.number.like("RINV%"), Invoice.untaxed.isnot(None))).all()
+    pool = collections.defaultdict(list)
+    for r in rinvs:
+        pool[(r.customer_name, round(float(r.untaxed), 2))].append(r)
+    n = 0
+    for o in originals:
+        key = (o.customer_name, round(-float(o.untaxed), 2))
+        if pool.get(key):
+            pool[key].pop()
+            o.payment_status = "Cancelled"
+            n += 1
+    db.session.commit()
+    if n:
+        print(f"Reclassified {n} reversed invoices as Cancelled (offsetting credit note in data).")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block heading %}Fill order {{ order.number }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <div class="small text-muted">
+    Customer: <strong>{{ order.customer.name }}</strong>
+    · from {{ order.source_pricelist.name }}
+    · {{ order.currency }}{% if order.vat_applicable %} · VAT {{ order.vat_rate|int }}%{% endif %}
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('orders.detail', order_id=order.id, classic=1) }}"><i class="bi bi-card-list"></i> Order details &amp; place</a>
+</div>
+
+<form method="post" action="{{ url_for('orders.fill', order_id=order.id) }}" id="fillForm">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div style="position:sticky; top:0; z-index:5; background:var(--bs-body-bg, #fff); padding:.5rem 0">
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <div class="input-group" style="max-width:420px">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input class="form-control" id="fillSearch" placeholder="Search product or article no…"
+               onkeyup="filterTable('fillSearch','fillTable')" autocomplete="off">
+      </div>
+      <span class="small text-muted">Subtotal <strong class="money" id="liveSub"></strong>
+        {% if order.vat_applicable %} · VAT <strong class="money" id="liveVat"></strong>{% endif %}
+        · Total <strong class="money text-rf-orange" id="liveTot"></strong></span>
+      <button class="btn btn-sm btn-primary ms-auto"><i class="bi bi-save"></i> Save &amp; review order</button>
+      <button class="btn btn-sm btn-outline-primary" name="stay" value="1"><i class="bi bi-save"></i> Save &amp; keep filling</button>
+    </div>
+  </div>
+
+  <div class="table-responsive rf-card mb-3">
+    <table class="table table-sm align-middle mb-0" id="fillTable">
+      <thead><tr><th>Art</th><th>Description</th><th>Pack</th><th class="text-end">Price</th><th class="text-end" style="width:110px">Quantity</th><th class="text-end">Line total</th></tr></thead>
+      <tbody>
+      {% set ns = namespace(section=None, plist=None) %}
+      {% for r in rows %}
+        {% if r.list_name and r.list_name != ns.plist %}
+          {% set ns.plist = r.list_name %}
+          <tr class="section-row"><td colspan="6" class="fw-semibold" style="background:#F47A21; color:#fff">{{ r.list_name }}</td></tr>
+        {% endif %}
+        {% if r.line.section and r.line.section != ns.section %}
+          {% set ns.section = r.line.section %}
+          <tr class="section-row table-secondary"><td colspan="6" class="fw-semibold small">{{ r.line.section }}</td></tr>
+        {% endif %}
+        <tr data-search="{{ (r.product.article_no ~ ' ' ~ r.product.description)|lower }}">
+          <td class="fw-semibold">{{ r.product.article_no }}</td>
+          <td>{{ r.product.description }}</td>
+          <td class="small">{{ r.line.pack_size or r.product.pack_size or '' }}{% if r.box %}<span class="d-block text-muted">min. box {{ '%g'|format(r.box) }}</span>{% endif %}</td>
+          <td class="text-end money">{{ r.price|money(order.currency) }}</td>
+          <td class="text-end">
+            <input type="number" name="qty_{{ r.line.id }}" value="{{ r.qty }}"
+                   {% if r.box %}min="{{ r.box }}" step="{{ r.box }}" title="Order in boxes of {{ '%g'|format(r.box) }}"{% else %}step="any" min="0"{% endif %}
+                   class="form-control form-control-sm text-end qty" data-price="{{ r.price }}"
+                   data-vat="{{ 1 if (order.vat_applicable and r.product.vat_applicable) else 0 }}"
+                   style="width:95px; display:inline-block">
+          </td>
+          <td class="text-end money fw-semibold line-total">{% if r.qty %}{{ (r.price * r.qty)|money(order.currency) }}{% endif %}</td>
+        </tr>
+      {% else %}<tr><td colspan="6" class="text-center text-muted py-3">No items on this pricelist.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var VATR = {{ order.vat_rate or 0 }};
+function fmt(n){ return n.toLocaleString(undefined, {maximumFractionDigits: 0}); }
+function recalc(){
+  var sub = 0, vat = 0;
+  document.querySelectorAll('#fillTable .qty').forEach(function(i){
+    var q = parseFloat(i.value) || 0, p = parseFloat(i.dataset.price) || 0;
+    var lt = q * p;
+    var cell = i.closest('tr').querySelector('.line-total');
+    if (cell) cell.textContent = q ? fmt(lt) : '';
+    sub += lt;
+    if (i.dataset.vat === '1') vat += lt * VATR / 100;
+  });
+  var s = document.getElementById('liveSub'); if (s) s.textContent = fmt(sub);
+  var v = document.getElementById('liveVat'); if (v) v.textContent = fmt(vat);
+  var t = document.getElementById('liveTot'); if (t) t.textContent = fmt(sub + vat);
+}
+document.querySelectorAll('#fillTable .qty').forEach(function(i){ i.addEventListener('input', recalc); });
+recalc();
+function filterTable(inputId, tableId){
+  var term = (document.getElementById(inputId).value || '').toLowerCase();
+  document.querySelectorAll('#' + tableId + ' tbody tr').forEach(function(tr){
+    if (tr.classList.contains('section-row')){ tr.style.display = term ? 'none' : ''; return; }
+    var s = tr.getAttribute('data-search') || '';
+    tr.style.display = (!term || s.indexOf(term) > -1) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

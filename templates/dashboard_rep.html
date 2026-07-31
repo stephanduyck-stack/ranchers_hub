@@ -9,7 +9,7 @@
 {% macro ordstatus(s) %}
   {% if s=='submitted' %}<span class="badge" style="background:#ED1C24">submitted</span>
   {% elif s=='placed' %}<span class="badge bg-dark">placed</span>
-  {% elif s=='in_fulfillment' %}<span class="badge" style="background:#F47A21">in fulfilment</span>
+  {% elif s=='in_fulfillment' %}<span class="badge" style="background:#F47A21">to deliver</span>
   {% elif s=='pending' %}<span class="badge badge-warn">pending stock</span>
   {% elif s in ['ready_for_dispatch'] %}<span class="badge" style="background:#6E7149">ready</span>
   {% elif s in ['out_for_delivery','dispatched'] %}<span class="badge" style="background:#2E7D32">out for delivery</span>

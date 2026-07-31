@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block heading %}Delivery-note filing{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div class="text-muted small">
+    Each invoiced delivery needs its physical signed delivery note back from
+    the driver. Mark the paper filed when the copy is in hand — the filing
+    number goes on the paper and on the invoice, so proof of delivery is one
+    lookup. Red rows: paper outstanding beyond {{ paper_aging }}h.
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('invoicing.index') }}">
+    <i class="bi bi-arrow-left"></i> Invoicing queue</a>
+</div>
+
+<h2 class="h6 mb-2"><i class="bi bi-inbox"></i> Paper still out
+  <span class="text-muted small fw-normal">({{ open_count }})</span></h2>
+{% for driver, orders in by_driver.items() %}
+<div class="rf-card mb-3">
+  <div class="px-3 pt-2 fw-semibold"><i class="bi bi-person"></i> {{ driver }}
+    <span class="text-muted small fw-normal">({{ orders|length }} note{{ 's' if orders|length != 1 }})</span></div>
+  <div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>DN</th><th>Order</th><th>Customer</th><th>Delivered</th>
+      <th>Outstanding</th><th>Invoice</th><th></th></tr></thead>
+    <tbody>
+    {% for o in orders %}
+      {% set h = hours_since(o.delivered_at) %}
+      <tr class="{{ 'table-danger' if h is not none and h > paper_aging }}">
+        <td class="fw-semibold">{{ o.dnote_number or '—' }}</td>
+        <td class="small">{{ o.number }}</td>
+        <td class="small">{{ o.customer.name if o.customer else '—' }}</td>
+        <td class="small">{{ o.delivered_at.strftime('%d %b %H:%M') if o.delivered_at else '—' }}</td>
+        <td>{% if h is not none %}<span class="badge {{ 'badge-danger' if h > paper_aging else 'badge-ok' }}">{{ '%.0f'|format(h) }}h</span>{% else %}—{% endif %}</td>
+        <td class="small">
+          {% if o.pod_filename %}<a href="{{ url_for('invoicing.pod', order_id=o.id) }}" target="_blank" title="Uploaded signed note"><i class="bi bi-card-image"></i></a>{% endif %}
+        </td>
+        <td class="text-end">
+          <form method="post" action="{{ url_for('invoicing.mark_filed', order_id=o.id) }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-primary"
+                    onclick="return confirm('Physical signed note for {{ o.dnote_number or o.number }} is in hand?');">
+              <i class="bi bi-archive"></i> Mark filed</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% else %}
+<div class="rf-card p-4 text-center text-muted mb-3">No paper outstanding. Every signed note is filed.</div>
+{% endfor %}
+
+<h2 class="h6 mb-2"><i class="bi bi-archive"></i> Recently filed</h2>
+<div class="table-responsive rf-card">
+<table class="table table-sm align-middle mb-0">
+  <thead><tr><th>Filing no</th><th>DN</th><th>Order</th><th>Customer</th>
+    <th>Filed</th><th>By</th></tr></thead>
+  <tbody>
+  {% for o in filed %}
+    <tr>
+      <td class="fw-semibold">{{ o.dnote_filing_no }}</td>
+      <td class="small">{{ o.dnote_number or '—' }}</td>
+      <td class="small">{{ o.number }}</td>
+      <td class="small">{{ o.customer.name if o.customer else '—' }}</td>
+      <td class="small">{{ o.dnote_filed_at.strftime('%d %b %Y %H:%M') if o.dnote_filed_at else '—' }}</td>
+      <td class="small">{{ o.dnote_filed_by.full_name if o.dnote_filed_by else '—' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="text-center text-muted py-4">Nothing filed yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

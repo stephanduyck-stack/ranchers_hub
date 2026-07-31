@@ -115,14 +115,47 @@ def _validity_lines(obj):
 
 
 def pricelist_to_pdf(pricelist):
+    """Customer-facing pricelist PDF.
+
+    27 Jul 2026: portrait A4, table centered with computed column widths that
+    always fill the content width, a footer with generated date and page
+    numbers. Landscape only when a list carries too many columns to breathe
+    in portrait (4+ tiers plus box columns)."""
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
-                            leftMargin=12 * mm, rightMargin=12 * mm,
-                            topMargin=10 * mm, bottomMargin=12 * mm)
     styles = getSampleStyleSheet()
-    cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=7.5, leading=9)
-    sect = ParagraphStyle("sect", parent=styles["Normal"], fontSize=8,
-                          textColor=colors.white, leading=10, fontName="Helvetica-Bold")
+
+    tiers = pricelist.tiers
+    # Only box columns that actually carry data appear on the PDF.
+    box_cols = [(k, lbl) for k, lbl in (("box_small", "Box S"),
+                                        ("box_medium", "Box M"),
+                                        ("box_large", "Box L"))
+                if any(getattr(l, k) for l in pricelist.lines)]
+    has_box = bool(box_cols)
+    n_price_cols = len(tiers) + len(box_cols)
+    use_landscape = n_price_cols > 6          # rare, very wide lists only
+    pagesize = landscape(A4) if use_landscape else A4
+    content_w = pagesize[0] - 2 * 15 * mm
+
+    company = settings.get("company_name", "Ranchers Finest U Ltd")
+
+    def _footer(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.HexColor("#8A8175"))
+        canvas.drawCentredString(
+            pagesize[0] / 2, 8 * mm,
+            f"{company} · {pricelist.name} · generated {date.today():%d %b %Y}"
+            f" · page {doc_.page}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(buf, pagesize=pagesize,
+                            title=f"Pricelist — {pricelist.name}",
+                            leftMargin=15 * mm, rightMargin=15 * mm,
+                            topMargin=12 * mm, bottomMargin=16 * mm)
+    cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=8, leading=10)
+    sect = ParagraphStyle("sect", parent=styles["Normal"], fontSize=8.5,
+                          textColor=colors.white, leading=11,
+                          fontName="Helvetica-Bold")
     elements = []
 
     vat = _vat_off_label(pricelist) if pricelist.is_zero_rated else f"VAT {pricelist.vat_rate:.0f}% applicable"
@@ -134,14 +167,11 @@ def pricelist_to_pdf(pricelist):
     rn = _rate_note(pricelist, pricelist.currency)
     if rn:
         subt.append(rn)
-    _pdf_header(elements, styles, "PRICELIST", subt)
+    _pdf_header(elements, styles, "PRICELIST", subt, width=content_w)
 
-    tiers = pricelist.tiers
-    has_box = any(l.box_small or l.box_medium or l.box_large for l in pricelist.lines)
-    header = ["Art No", "Description", "Pack size"]
+    header = ["Art No", "Description", "Pack"]
     header += [t.label for t in tiers]
-    if has_box:
-        header += ["Box S", "Box M", "Box L"]
+    header += [lbl for _k, lbl in box_cols]
     data = [header]
 
     # group rows by section
@@ -156,35 +186,52 @@ def pricelist_to_pdf(pricelist):
                line.pack_size or line.product.pack_size or ""]
         for t in tiers:
             eff = effective_line_price(line, t.key)
-            txt = format_money(eff["amount"], eff["currency"]) if eff["amount"] is not None else ""
+            txt = format_money(eff["amount"], eff["currency"]) if eff["amount"] is not None else "—"
             if eff["is_fixed"]:
                 txt += " [fixed]"
             row.append(txt)
-        if has_box:
-            row += [_num(line.box_small), _num(line.box_medium), _num(line.box_large)]
+        row += [_num(getattr(line, k)) for k, _lbl in box_cols]
         data.append(row)
 
-    table = Table(data, repeatRows=1)
+    # Column widths: fixed art/pack/box, priced tiers, description takes the
+    # rest — everything sums to the content width so the table sits centered
+    # and edge to edge with the header band.
+    art_w, pack_w, box_w, tier_w = 16 * mm, 15 * mm, 12 * mm, 25 * mm
+    desc_w = content_w - art_w - pack_w - len(tiers) * tier_w \
+        - len(box_cols) * box_w
+    if desc_w < 40 * mm:                       # squeeze tiers before the text
+        tier_w = max(20 * mm, tier_w - (40 * mm - desc_w) / max(len(tiers), 1))
+        desc_w = content_w - art_w - pack_w - len(tiers) * tier_w \
+            - len(box_cols) * box_w
+    widths = [art_w, desc_w, pack_w] + [tier_w] * len(tiers) \
+        + [box_w] * len(box_cols)
+
+    table = Table(data, repeatRows=1, colWidths=widths, hAlign="CENTER")
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), RF_INK),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 7.5),
-        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+        ("FONTSIZE", (0, 0), (-1, 0), 8),
+        ("FONTSIZE", (0, 1), (-1, -1), 8),
+        ("ALIGN", (3, 0), (-1, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, RF_CREAM]),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, RF_ORANGE),
         ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#E0D5C8")),
-        ("TOPPADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]
     # shade section rows
     for i, row in enumerate(data):
         if isinstance(row[0], Paragraph) and getattr(row[0], "style", None) is sect:
             style.append(("BACKGROUND", (0, i), (-1, i), RF_ORANGE))
             style.append(("SPAN", (0, i), (-1, i)))
+            style.append(("ALIGN", (0, i), (0, i), "LEFT"))
     table.setStyle(TableStyle(style))
     elements.append(table)
-    doc.build(elements)
+    doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)
     buf.seek(0)
     return buf.read()
 
@@ -479,10 +526,15 @@ def delivery_note_to_pdf(order):
     _dnd = order.dnote_at or order.fulfilled_at or order.order_date
     dn_date = _dnd.strftime("%d %b %Y %H:%M") if hasattr(_dnd, "strftime") and hasattr(_dnd, "hour") \
         else (_dnd.strftime("%d %b %Y") if hasattr(_dnd, "strftime") else str(_dnd or "—"))
+    _terms = order.payment_terms or (c.payment_terms if c else "") or "—"
+    _pay = (f"<b>PAY ON DELIVERY — mobile money {format_money(order.dispatched_total, order.currency)} "
+            f"(no cash; ref goes in the app)</b>"
+            if order.is_cod else f"On account — {_terms}")
     dn_rows = [("Delivery note", f"<b>{order.dnote_number or '—'}</b>"),
                ("Order no", order.number),
                ("Date", dn_date),
                ("Customer PO", order.customer_po),
+               ("Payment", _pay),
                ("Driver", order.assigned_driver.full_name if order.assigned_driver else "—")]
     info = Table([[_info_box("CUSTOMER", cust_rows, styles),
                    _info_box("DELIVERY", dn_rows, styles)]],
@@ -501,8 +553,12 @@ def delivery_note_to_pdf(order):
         badge = {"available": "", "out_of_stock": "OUT OF STOCK",
                  "not_delivered": "NOT DELIVERED"}.get(avail, "")
         vmark = "VAT" if (order.vat_applicable and getattr(l, "is_vatable", False)) else "—"
+        # Dispatched quantities on purpose (31 Jul 2026): the delivery note
+        # records what left on the truck. Accepted quantities recorded later
+        # live on the invoice; a reprint of the note must match the paper the
+        # customer signed.
         data.append([l.article_no or "", Paragraph(l.description or "", cell),
-                     l.pack_size or "", _num(l.quantity), _num(l.delivered_qty), vmark, badge])
+                     l.pack_size or "", _num(l.quantity), _num(l.dispatched_qty), vmark, badge])
     table = Table(data, repeatRows=1, colWidths=colw)
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), RF_INK),
@@ -518,15 +574,15 @@ def delivery_note_to_pdf(order):
     elements.append(table)
     elements.append(Spacer(1, 5 * mm))
 
-    # Value summary (VAT only on the items marked VAT)
-    totals = [["Subtotal (net)", format_money(order.subtotal, order.currency)]]
+    # Value summary at DISPATCHED quantities (VAT only on the items marked VAT)
+    totals = [["Subtotal (net)", format_money(order.dispatched_subtotal, order.currency)]]
     if not order.vat_applicable:
         totals.append(["VAT", _vat_off_label(order)])
-    elif order.vat_amount:
-        totals.append([f"VAT {order.vat_rate:.0f}% (VAT items)", format_money(order.vat_amount, order.currency)])
+    elif order.dispatched_vat_amount:
+        totals.append([f"VAT {order.vat_rate:.0f}% (VAT items)", format_money(order.dispatched_vat_amount, order.currency)])
     else:
         totals.append(["VAT", "None (no VAT items)"])
-    totals.append(["TOTAL", format_money(order.total, order.currency)])
+    totals.append(["TOTAL", format_money(order.dispatched_total, order.currency)])
     tt = Table(totals, colWidths=[55 * mm, 40 * mm], hAlign="RIGHT")
     tt.setStyle(TableStyle([
         ("FONTSIZE", (0, 0), (-1, -1), 9.5),
@@ -548,6 +604,85 @@ def delivery_note_to_pdf(order):
     elements.append(Paragraph("Goods received in good order and condition:", cell))
     elements.append(Spacer(1, 4 * mm))
     elements.append(sign)
+    doc.build(elements)
+    buf.seek(0)
+    return buf.read()
+
+
+def picking_slip_to_pdf(order):
+    """Warehouse picking slip (21 Jul 2026): printed at acceptance. Ordered
+    quantities in the product's unit, an EMPTY Picked column for the picker's
+    pen, an EMPTY Verified column for the checker, and signature lines for
+    both. The fulfilment officer types the picked figures into the Fulfilled
+    column afterwards."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            title=f"Picking Slip {order.number}",
+                            leftMargin=14 * mm, rightMargin=14 * mm,
+                            topMargin=10 * mm, bottomMargin=14 * mm)
+    styles = getSampleStyleSheet()
+    cell = ParagraphStyle("cell", parent=styles["Normal"], fontSize=8.5, leading=11)
+    elements = []
+    _doc_header(elements, styles, "PICKING SLIP", order.number, None)
+
+    c = order.customer
+    cust_rows = [("Customer", f"<b>{c.name}</b>"),
+                 ("Deliver to", order.delivery_address),
+                 ("Delivery date", order.delivery_date.strftime("%d %b %Y")
+                  if order.delivery_date else "—")]
+    ord_rows = [("Order no", f"<b>{order.number}</b>"),
+                ("Accepted", order.accepted_at.strftime("%d %b %Y %H:%M")
+                 if order.accepted_at else "—"),
+                ("Accepted by", order.accepted_by.full_name
+                 if order.accepted_by else "—")]
+    info = Table([[_info_box("CUSTOMER", cust_rows, styles),
+                   _info_box("ORDER", ord_rows, styles)]],
+                 colWidths=[90 * mm, 91 * mm])
+    info.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                              ("LEFTPADDING", (0, 0), (0, 0), 0),
+                              ("RIGHTPADDING", (1, 0), (1, 0), 0)]))
+    elements.append(info)
+    elements.append(Spacer(1, 6 * mm))
+
+    header = ["Art No", "Description", "Pack", "Ordered", "Picked", "Verified"]
+    colw = [16 * mm, 63 * mm, 18 * mm, 24 * mm, 30 * mm, 30 * mm]
+    data = [header]
+    for l in order.lines:
+        uom = (l.product.unit_of_measure or "") if l.product else ""
+        oos = (getattr(l, "availability", "") == "out_of_stock")
+        qty = f"{_num(l.quantity)} {uom}".strip() + (" (OUT OF STOCK)" if oos else "")
+        data.append([l.article_no or "", Paragraph(l.description or "", cell),
+                     l.pack_size or "", qty, "", ""])
+    table = Table(data, repeatRows=1, colWidths=colw)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), RF_INK),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, RF_CREAM]),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#E0D5C8")),
+        ("TOPPADDING", (0, 1), (-1, -1), 9), ("BOTTOMPADDING", (0, 1), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, 0), 3), ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+    ]))
+    elements.append(table)
+    elements.append(Spacer(1, 4 * mm))
+    elements.append(Paragraph(
+        "Picker: write the picked quantity per line in the product's unit "
+        "(kg items in kg, piece items in pieces). Checker: verify and initial "
+        "each line. The picked figures are entered into the system by the "
+        "fulfilment officer.", cell))
+    elements.append(Spacer(1, 8 * mm))
+    for who in ("Picked by (name):", "Verified by (name):"):
+        sign = Table([[who, "Signature:", "Date / time:"]],
+                     colWidths=[70 * mm, 60 * mm, 51 * mm])
+        sign.setStyle(TableStyle([
+            ("LINEBELOW", (0, 0), (-1, 0), 0.5, RF_INK),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ]))
+        elements.append(sign)
+        elements.append(Spacer(1, 2 * mm))
     doc.build(elements)
     buf.seek(0)
     return buf.read()
@@ -810,5 +945,80 @@ def _autosize(ws, ncols):
 def _wb_bytes(wb):
     buf = io.BytesIO()
     wb.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
+def portal_welcome_pdf(customer, user, temp_pw, portal_url):
+    """One-page welcome sheet for a portal login: credentials plus the short
+    operations guide. Called with a freshly reset temporary password — the
+    stored hash can never be printed, so generating this sheet always goes
+    together with a password reset."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            title=f"Portal access - {customer.name}",
+                            leftMargin=14 * mm, rightMargin=14 * mm,
+                            topMargin=10 * mm, bottomMargin=14 * mm)
+    styles = getSampleStyleSheet()
+    elements = []
+    _doc_header(elements, styles, "CUSTOMER PORTAL ACCESS", customer.name)
+
+    acc_rows = [("Account", f"<b>{customer.name}</b>"),
+                ("Contact", customer.contact_name),
+                ("Email", customer.email), ("Phone", customer.phone)]
+    login_rows = [("Portal", f"<b>{portal_url}</b>"),
+                  ("Username", f"<b>{user.username}</b>"),
+                  ("Temp. password", f"<b>{temp_pw}</b>")]
+    info = Table([[_info_box("ACCOUNT", acc_rows, styles),
+                   _info_box("LOGIN DETAILS", login_rows, styles)]],
+                 colWidths=[90 * mm, 91 * mm])
+    info.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                              ("LEFTPADDING", (0, 0), (0, 0), 0),
+                              ("RIGHTPADDING", (1, 0), (1, 0), 0)]))
+    elements.append(info)
+    elements.append(Spacer(1, 4 * mm))
+
+    note = ParagraphStyle("pw_note", parent=styles["Normal"], fontSize=9,
+                          textColor=RF_CHARCOAL, leading=12)
+    h = ParagraphStyle("pw_h", parent=styles["Normal"], fontSize=10.5,
+                       textColor=RF_INK, fontName="Helvetica-Bold",
+                       spaceBefore=8, spaceAfter=2)
+    elements.append(Paragraph(
+        "Sign in with the details above. The portal asks you to set your own "
+        "password immediately; the temporary password stops working after "
+        "that. Keep this sheet confidential until then.", note))
+    elements.append(Spacer(1, 2 * mm))
+
+    elements.append(Paragraph("How the portal works", h))
+    for title, body in [
+        ("1. Your pricelist",
+         "My Pricelist shows your agreed prices. Prices update automatically "
+         "when new lists take effect, so what you see is always current."),
+        ("2. Placing an order",
+         "Click New Order, pick your products and quantities, and submit. "
+         "You receive an order number immediately and our team confirms the "
+         "order before it enters fulfilment. You may attach your own LPO."),
+        ("3. Tracking orders",
+         "The Home page lists your draft, current, and past orders with live "
+         "status from confirmation to delivery. Open any order for the "
+         "detail or the order PDF."),
+        ("4. Messages",
+         "Questions or changes on an order go through Messages. Our team "
+         "replies in the portal and you see a notification badge."),
+        ("5. Offers and promotions",
+         "Offers we issue to you appear on your Home page. Accepted offers "
+         "convert into orders. Running promotions show there too."),
+        ("6. Your account",
+         "Change your password any time under Account. A login serving "
+         "several outlets picks the outlet in the top bar when ordering."),
+    ]:
+        elements.append(Paragraph(f"<b>{title}</b> — {body}", note))
+        elements.append(Spacer(1, 1.5 * mm))
+
+    elements.append(Spacer(1, 2 * mm))
+    elements.append(Paragraph(
+        "Need help? Contact your sales representative or send us a message "
+        "in the portal.", note))
+    doc.build(elements)
     buf.seek(0)
     return buf.read()

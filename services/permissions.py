@@ -30,6 +30,7 @@ CAPS = [
     ("pay_suppliers", "Pay suppliers", "Record payments clearing supplier bills (Finance manager and up)."),
     ("reconcile_bank", "Reconcile bank & cash", "Tick ledger lines against bank/cash statements and close reconciliations (Finance manager and up)."),
     ("record_shop_sales", "Record shop sales", "Enter a shop's daily takings: posts revenue, VAT and COGS and reduces the shop's stock (Cashier and up)."),
+    ("import_finance_files", "Import daily finance files", "Upload the daily Odoo exports (itemized invoices, payments, customer receivables) that update customer statements and credit balances (Finance clerk and up)."),
 ]
 
 # Individual reports that can be allowed per role (when view_reports is on).
@@ -43,6 +44,7 @@ REPORTS = [
     ("history", "Sales history"),
     ("product_month", "Products by month"),
     ("all_time", "All-time report"),
+    ("top90", "Top performers (90 days)"),
 ]
 
 # Roles that can be configured (admin is always full; customer is portal-only).
@@ -61,9 +63,12 @@ ROLES = [("manager", "Manager"), ("sales_director", "Sales director"),
          ("finance_viewer", "Finance viewer")]
 
 DEFAULTS = {
+    # 21 Jul 2026: manage_stock removed from manager — only the store manager
+    # adjusts stock quantities (adding produced goods, wastage, counts).
+    # Admin/CEO keep the structural bypass in has_perm.
     "manager": {"manage_catalogue": True, "fulfil_orders": True,
                 "view_reports": True, "create_offers_orders": True, "log_activity": True,
-                "manage_stock": True, "audit_stock": True, "manage_targets": True,
+                "manage_stock": False, "audit_stock": True, "manage_targets": True,
                 "view_production": True, "record_production": True,
                 "view_accounting": True, "record_purchases": True,
                 "record_receipts": True, "pay_suppliers": True,
@@ -121,20 +126,23 @@ DEFAULTS = {
             "view_costing": True, "edit_costing": False,
             "view_production": True, "approve_credit_notes": True,
             "record_purchases": True,
-            "pay_suppliers": True, "reconcile_bank": True},
+            "pay_suppliers": True, "reconcile_bank": True,
+            "import_finance_files": True},
     "finance_manager": {"manage_catalogue": False, "fulfil_orders": False,
                         "view_reports": True, "create_offers_orders": False,
                         "log_activity": False,
                         "view_accounting": True, "post_journal": True,
                         "view_costing": True, "record_purchases": True,
                         "record_receipts": True, "pay_suppliers": True,
-                        "reconcile_bank": True, "record_shop_sales": True},
+                        "reconcile_bank": True, "record_shop_sales": True,
+                        "import_finance_files": True},
     "finance_clerk": {"manage_catalogue": False, "fulfil_orders": False,
                       "view_reports": False, "create_offers_orders": False,
                       "log_activity": False,
                       "view_accounting": True, "post_journal": False,
                       "record_purchases": True, "record_receipts": True,
-                      "record_shop_sales": True},
+                      "record_shop_sales": True,
+                      "import_finance_files": True},
     # Cashier: no accounting screens today; gains record-receipt rights when
     # the cash module lands (Phase 5). The role exists now so shop accounts
     # can be created ahead of that rollout.

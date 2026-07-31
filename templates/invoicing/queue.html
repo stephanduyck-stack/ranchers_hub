@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block heading %}Invoicing queue{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div class="text-muted small">
+    Deliveries confirmed with a signed delivery note wait here. Invoice the
+    quantities the customer accepted on the signed note.
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('invoicing.filing') }}">
+      <i class="bi bi-archive"></i> Filing queue{% if filing_open %} <span class="badge badge-warn">{{ filing_open }}</span>{% endif %}</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('invoicing.variance') }}">
+      <i class="bi bi-clipboard-data"></i> Variance report</a>
+  </div>
+</div>
+
+<h2 class="h6 mb-2"><i class="bi bi-receipt"></i> To invoice
+  <span class="text-muted small fw-normal">({{ to_invoice|length }})</span></h2>
+<div class="table-responsive rf-card mb-4">
+<table class="table table-sm table-hover align-middle mb-0">
+  <thead><tr><th>Order</th><th>DN</th><th>Customer</th><th>Driver</th>
+    <th>Delivered</th><th>Waiting</th><th class="text-end">Dispatched value</th>
+    <th>Signed note</th><th></th></tr></thead>
+  <tbody>
+  {% for o in to_invoice %}
+    {% set h = hours_since(o.delivered_at) %}
+    <tr>
+      <td class="fw-semibold">{{ o.number }}</td>
+      <td class="small">{{ o.dnote_number or '—' }}</td>
+      <td class="small">{{ o.customer.name if o.customer else '—' }}</td>
+      <td class="small">{{ o.assigned_driver.full_name if o.assigned_driver else '—' }}</td>
+      <td class="small">{{ o.delivered_at.strftime('%d %b %H:%M') if o.delivered_at else '—' }}</td>
+      <td>{% if h is not none %}<span class="badge {{ 'badge-danger' if h > pod_aging else 'badge-ok' }}">{{ '%.0f'|format(h) }}h</span>{% else %}—{% endif %}</td>
+      <td class="text-end money">{{ o.dispatched_total|money(o.currency) }}</td>
+      <td class="small">{% if o.pod_filename %}<a href="{{ url_for('invoicing.pod', order_id=o.id) }}" target="_blank"><i class="bi bi-card-image"></i> View</a>{% else %}<span class="text-muted">missing</span>{% endif %}</td>
+      <td class="text-end"><a class="btn btn-sm btn-primary" href="{{ url_for('invoicing.invoice_form', order_id=o.id) }}"><i class="bi bi-receipt"></i> Invoice</a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="9" class="text-center text-muted py-4">Nothing waiting.
+      Deliveries appear here the moment the driver uploads the signed delivery note.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2 class="h6 mb-2"><i class="bi bi-truck"></i> On the road — signed note not back yet
+  <span class="text-muted small fw-normal">({{ on_road|length }}; red after {{ pod_aging }}h)</span></h2>
+<div class="table-responsive rf-card">
+<table class="table table-sm align-middle mb-0">
+  <thead><tr><th>Order</th><th>DN</th><th>Customer</th><th>Driver</th>
+    <th>Left</th><th>Out for</th></tr></thead>
+  <tbody>
+  {% for o in on_road %}
+    {% set h = hours_since(o.dispatched_at) %}
+    <tr>
+      <td class="fw-semibold">{{ o.number }}</td>
+      <td class="small">{{ o.dnote_number or '—' }}</td>
+      <td class="small">{{ o.customer.name if o.customer else '—' }}</td>
+      <td class="small">{{ o.assigned_driver.full_name if o.assigned_driver else '—' }}</td>
+      <td class="small">{{ o.dispatched_at.strftime('%d %b %H:%M') if o.dispatched_at else '—' }}</td>
+      <td>{% if h is not none %}<span class="badge {{ 'badge-danger' if h > pod_aging else 'badge-ok' }}">{{ '%.0f'|format(h) }}h</span>{% else %}—{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="text-center text-muted py-4">No trucks out.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

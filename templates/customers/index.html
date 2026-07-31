@@ -16,31 +16,59 @@
 </div>
 {% if not show_archived %}
 <ul class="nav nav-pills mb-3 flex-wrap gap-1">
-  <li class="nav-item"><a class="nav-link {{ 'active' if status=='active' }}" href="{{ url_for('customers.index', status='active', category=cat) }}">Active <span class="badge bg-light text-dark">{{ n_active }}</span></a></li>
-  <li class="nav-item"><a class="nav-link {{ 'active' if status=='inactive' }}" href="{{ url_for('customers.index', status='inactive', category=cat) }}">Not active <span class="badge bg-light text-dark">{{ n_inactive }}</span></a></li>
-  <li class="nav-item"><a class="nav-link {{ 'active' if status=='all' }}" href="{{ url_for('customers.index', status='all', category=cat) }}">All <span class="badge bg-light text-dark">{{ n_active + n_inactive }}</span></a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if status=='active' }}" href="{{ url_for('customers.index', status='active', category=cat, since=since, rep=rep_id) }}">Active <span class="badge bg-light text-dark">{{ n_active }}</span></a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if status=='inactive' }}" href="{{ url_for('customers.index', status='inactive', category=cat, since=since, rep=rep_id) }}">Not active <span class="badge bg-light text-dark">{{ n_inactive }}</span></a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if status=='all' }}" href="{{ url_for('customers.index', status='all', category=cat, since=since, rep=rep_id) }}">All <span class="badge bg-light text-dark">{{ n_active + n_inactive }}</span></a></li>
 </ul>
 <p class="text-muted small mb-2">Active means a purchase in the last 6 months (from sales history and live orders).</p>
 {% endif %}
+{% if since_date %}
+<div class="alert alert-warning py-2 d-flex justify-content-between align-items-center">
+  <span><i class="bi bi-funnel"></i> Showing customers {{ since_label }} (since {{ since_date.strftime('%d %b %Y') }}), newest first.</span>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('customers.index') }}">Clear filter</a>
+</div>
+{% endif %}
 <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
-  <div class="input-group" style="max-width:360px">
+  <div class="input-group" style="max-width:320px">
     <span class="input-group-text"><i class="bi bi-search"></i></span>
     <input type="text" id="custSearch" class="form-control" placeholder="Search customers by name, contact or phone…" autofocus autocomplete="off">
   </div>
-  <form method="get" class="m-0">
-    <div class="input-group" style="max-width:300px">
+  <form method="get" class="m-0 d-flex flex-wrap gap-2">
+    <input type="hidden" name="status" value="{{ status }}">
+    {% if show_archived %}<input type="hidden" name="archived" value="1">{% endif %}
+    <div class="input-group input-group-sm" style="width:auto">
       <span class="input-group-text">Category</span>
       <select class="form-select" name="category" onchange="this.form.submit()">
-        <option value="">All categories</option>
+        <option value="">All</option>
         {% for ct in categories %}<option value="{{ ct.id }}" {{ 'selected' if ct.id==cat }}>{{ ct.name }}</option>{% endfor %}
       </select>
     </div>
+    <div class="input-group input-group-sm" style="width:auto">
+      <span class="input-group-text">Rep</span>
+      <select class="form-select" name="rep" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for r in rep_users %}<option value="{{ r.id }}" {{ 'selected' if r.id==rep_id }}>{{ r.full_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="input-group input-group-sm" style="width:auto">
+      <span class="input-group-text">Customer since</span>
+      <select class="form-select" name="since" onchange="this.form.submit()">
+        <option value="">Any time</option>
+        <option value="mtd" {{ 'selected' if since=='mtd' }}>This month</option>
+        <option value="30" {{ 'selected' if since=='30' }}>Last 30 days</option>
+        <option value="90" {{ 'selected' if since=='90' }}>Last 90 days</option>
+        <option value="365" {{ 'selected' if since=='365' }}>Last 12 months</option>
+      </select>
+    </div>
+    {% if cat or rep_id or since %}
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('customers.index') }}"><i class="bi bi-x-lg"></i> Clear</a>
+    {% endif %}
   </form>
   <span class="text-muted small ms-auto" id="custCount">{{ customers|length }} customer{{ '' if customers|length == 1 else 's' }}</span>
 </div>
 <div class="table-responsive rf-card">
 <table class="table table-hover align-middle mb-0">
-  <thead><tr><th>Name</th><th>Status</th><th>Category</th><th>Contact</th><th>Market</th><th>Reps</th></tr></thead>
+  <thead><tr><th>Name</th><th>Status</th><th>Category</th><th>Contact</th><th>Market</th><th>Reps</th><th>Customer since</th></tr></thead>
   <tbody id="custRows">
   {% for c in customers %}
     <tr data-search="{{ (c.name ~ ' ' ~ (c.contact_name or '') ~ ' ' ~ (c.phone or '') ~ ' ' ~ (c.category.name if c.category else ''))|lower }}">
@@ -50,9 +78,10 @@
       <td class="small">{{ c.contact_name or '' }}{% if c.phone %} · {{ c.phone }}{% endif %}</td>
       <td class="text-capitalize">{{ c.market }}</td>
       <td class="small">{{ c.reps|map(attribute='full_name')|join(', ') or '—' }}</td>
+      <td class="small">{{ c.created_at.strftime('%d %b %Y') if c.created_at else '—' }}</td>
     </tr>
-  {% else %}<tr><td colspan="6" class="text-center text-muted py-4">No customers visible.</td></tr>{% endfor %}
-  <tr id="custNoMatch" class="d-none"><td colspan="6" class="text-center text-muted py-4">No customers match your search.</td></tr>
+  {% else %}<tr><td colspan="7" class="text-center text-muted py-4">No customers visible.</td></tr>{% endfor %}
+  <tr id="custNoMatch" class="d-none"><td colspan="7" class="text-center text-muted py-4">No customers match your search.</td></tr>
   </tbody>
 </table>
 </div>

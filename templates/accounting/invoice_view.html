@@ -32,6 +32,23 @@
   {% endif %}
 </div>
 
+{% if invoice.order and (invoice.order.dnote_number or invoice.order.pod_filename or invoice.order.dnote_filing_no) %}
+<div class="rf-card p-3 mb-3">
+  <span class="small text-muted me-2"><i class="bi bi-truck"></i> Proof of delivery:</span>
+  <span class="small">
+    {% set o = invoice.order %}
+    {% if o.dnote_number %}DN <strong>{{ o.dnote_number }}</strong>{% endif %}
+    {% if o.delivered_at %} · delivered {{ o.delivered_at.strftime('%d %b %Y %H:%M') }}{% endif %}
+    {% if o.assigned_driver %} · driver {{ o.assigned_driver.full_name }}{% endif %}
+    {% if o.pod_filename %}{% set pod_ep = 'invoicing.pod' if (current_user.is_finance or current_user.role in ['admin','ceo','manager']) else 'orders.pod' %} · <a href="{{ url_for(pod_ep, order_id=o.id) }}" target="_blank"><i class="bi bi-card-image"></i> signed note (uploaded)</a>{% endif %}
+    {% if o.dnote_filing_no %} · physical copy filed as <strong>{{ o.dnote_filing_no }}</strong>
+      {{ '(' + o.dnote_filed_at.strftime('%d %b %Y') + ')' if o.dnote_filed_at }}
+    {% else %} · <span class="badge badge-warn">physical signed note not filed yet</span>{% endif %}
+    {% if o.has_variance %} · <span class="badge badge-warn" title="Customer accepted less than dispatched — see the delivery variance report">delivery variance</span>{% endif %}
+  </span>
+</div>
+{% endif %}
+
 <div class="table-responsive rf-card">
 <table class="table table-sm align-middle mb-0">
   <thead><tr><th>Description</th><th class="text-end">Qty</th>

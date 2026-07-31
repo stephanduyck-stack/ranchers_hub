@@ -41,6 +41,9 @@
       {% macro navgroup(label) -%}
       <div class="text-uppercase small fw-semibold px-3 mt-3 mb-1" style="opacity:.5;letter-spacing:.04em">{{ label }}</div>
       {%- endmacro %}
+      {% if current_user.can_clear_credit %}
+      <a class="nav-link {{ 'active' if ep=='customers.credit_alerts' }}" href="{{ url_for('customers.credit_alerts') }}"><i class="bi bi-shield-exclamation"></i> Credit alerts{% if credit_alerts_open %} <span class="badge badge-danger">{{ credit_alerts_open }}</span>{% endif %}</a>
+      {% endif %}
       {% if current_user.is_ceo or current_user.is_sales_director %}
       {# CEO / Sales director: Dashboard first, then Reports, Approvals, then the rest, grouped by module. #}
       <a class="nav-link {{ 'active' if ep.startswith('dashboard') }}" href="{{ url_for('dashboard.home') }}"><i class="bi bi-speedometer2"></i> Dashboard</a>
@@ -115,17 +118,29 @@
       {% if has_perm(current_user, 'view_reports') %}
       <a class="nav-link {{ 'active' if ep.startswith('reports') }}" href="{{ url_for('reports.index') }}"><i class="bi bi-bar-chart-line"></i> Reports</a>
       {% endif %}
+      {% elif current_user.is_fulfilment_officer %}
+      {# Fulfilment officer (21 Jul 2026): the job is the orders inbox and
+         nothing else — one link, no dashboard, no catalogue, no noise. #}
+      <a class="nav-link {{ 'active' if ep.startswith('orders') }}" href="{{ url_for('orders.index') }}"><i class="bi bi-cart-check"></i> Orders</a>
       {% elif current_user.is_finance %}
       {# Finance roles: what matters to them comes FIRST. Accounting on top,
          then costing and oversight; no fulfilment noise. The cashier variant
          collapses to the till (receipts) alone. #}
       <a class="nav-link {{ 'active' if ep.startswith('dashboard') }}" href="{{ url_for('dashboard.home') }}"><i class="bi bi-speedometer2"></i> Dashboard</a>
       {{ navgroup('Accounting') }}
+      {% if has_perm(current_user, 'import_finance_files') %}
+      <a class="nav-link {{ 'active' if ep == 'customers.finance_uploads' }}" href="{{ url_for('customers.finance_uploads') }}"><i class="bi bi-cloud-arrow-up"></i> Daily uploads</a>
+      {% endif %}
       {% if has_perm(current_user, 'record_receipts') %}
       <a class="nav-link {{ 'active' if ep.startswith('accounting.receipt') }}" href="{{ url_for('accounting.receipts') }}"><i class="bi bi-cash-coin"></i> Receipts</a>
       {% endif %}
       {% if has_perm(current_user, 'record_shop_sales') %}
       <a class="nav-link {{ 'active' if ep.startswith('accounting.shop') }}" href="{{ url_for('accounting.shops') }}"><i class="bi bi-shop-window"></i> Shops</a>
+      {% endif %}
+      {% if features.get('invoice_after_delivery') %}
+      <a class="nav-link {{ 'active' if ep in ['invoicing.index','invoicing.invoice_form'] }}" href="{{ url_for('invoicing.index') }}"><i class="bi bi-receipt"></i> Invoicing queue{% if inv_queue_open %} <span class="badge badge-danger">{{ inv_queue_open }}</span>{% endif %}</a>
+      <a class="nav-link {{ 'active' if ep=='invoicing.filing' }}" href="{{ url_for('invoicing.filing') }}"><i class="bi bi-archive"></i> DN filing{% if dn_filing_open %} <span class="badge badge-warn">{{ dn_filing_open }}</span>{% endif %}</a>
+      <a class="nav-link {{ 'active' if ep=='invoicing.variance' }}" href="{{ url_for('invoicing.variance') }}"><i class="bi bi-clipboard-data"></i> Delivery variance</a>
       {% endif %}
       {% if has_perm(current_user, 'view_accounting') %}
       {% if not has_perm(current_user, 'record_shop_sales') %}
@@ -279,8 +294,16 @@
       {% if (has_perm(current_user, 'view_accounting') or has_perm(current_user, 'record_receipts'))
             and not current_user.is_finance %}
       {{ navgroup('Accounting') }}
+      {% if has_perm(current_user, 'import_finance_files') %}
+      <a class="nav-link {{ 'active' if ep == 'customers.finance_uploads' }}" href="{{ url_for('customers.finance_uploads') }}"><i class="bi bi-cloud-arrow-up"></i> Daily uploads</a>
+      {% endif %}
       {% if has_perm(current_user, 'record_receipts') %}
       <a class="nav-link {{ 'active' if ep.startswith('accounting.receipt') }}" href="{{ url_for('accounting.receipts') }}"><i class="bi bi-cash-coin"></i> Receipts</a>
+      {% endif %}
+      {% if features.get('invoice_after_delivery') and (current_user.is_finance or current_user.role in ['admin','ceo','manager']) %}
+      <a class="nav-link {{ 'active' if ep in ['invoicing.index','invoicing.invoice_form'] }}" href="{{ url_for('invoicing.index') }}"><i class="bi bi-receipt"></i> Invoicing queue{% if inv_queue_open %} <span class="badge badge-danger">{{ inv_queue_open }}</span>{% endif %}</a>
+      <a class="nav-link {{ 'active' if ep=='invoicing.filing' }}" href="{{ url_for('invoicing.filing') }}"><i class="bi bi-archive"></i> DN filing{% if dn_filing_open %} <span class="badge badge-warn">{{ dn_filing_open }}</span>{% endif %}</a>
+      <a class="nav-link {{ 'active' if ep=='invoicing.variance' }}" href="{{ url_for('invoicing.variance') }}"><i class="bi bi-clipboard-data"></i> Delivery variance</a>
       {% endif %}
       {% if has_perm(current_user, 'view_accounting') %}
       <a class="nav-link {{ 'active' if ep.startswith('accounting.journal') }}" href="{{ url_for('accounting.journal') }}"><i class="bi bi-journal-bookmark"></i> Journal</a>

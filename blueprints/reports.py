@@ -31,7 +31,8 @@ def _guard():
     key = {"fulfilment": "fulfilment", "sales": "sales",
            "customer_insights": "customer_insights", "lapsed": "lapsed",
            "reorder": "reorder", "scorecard": "scorecard", "velocity": "velocity",
-           "fulfilment_perf": "fulfilment_perf", "offers_report": "offers"}.get(ep)
+           "fulfilment_perf": "fulfilment_perf", "offers_report": "offers",
+           "top90": "top90"}.get(ep)
     if key and not can_view_report(current_user, key):
         abort(403)
 
@@ -101,11 +102,14 @@ def index():
     # Net (excl-VAT) UGX so live orders match the net invoice history.
     _ugx = net_ugx
 
+    from services.revenue import export_customer_ids, dist_band
+    _exp_ids = export_customer_ids()
+
     def _chan_label(c):
         if c is None:
             return "Other"
         if (c.segment or "customer") == "distributor":
-            return "Distributors"
+            return f"{dist_band(c, _exp_ids)} distributors"
         return (c.category.name if c.category else None) or "Other"
 
     hist_cutover = _sh_latest_idx()                   # last pivot month (product mix)
@@ -117,11 +121,10 @@ def index():
     hist_month, live_month = defaultdict(float), defaultdict(float)
     chan, custr, prodm = defaultdict(float), defaultdict(float), defaultdict(float)
 
-    # TODO(H5): non-UGX invoices are dropped (Invoice has no rate column, only a
-    # currency). Historical foreign invoices need a dated rate at import time to
-    # be included; live foreign orders are handled net by net_ugx().
+    # H5 resolved 8 Jul 2026: Odoo "Signed" amounts are company currency (UGX)
+    # for every invoice; the currency column is informational only.
     for i in db.session.scalars(db.select(Invoice).where(
-            Invoice.currency == "UGX", Invoice.payment_status != "Reversed",
+            Invoice.payment_status != "Reversed",
             Invoice.invoice_date.isnot(None))):
         idx = i.invoice_date.year * 12 + i.invoice_date.month
         val = float(i.untaxed or 0)
@@ -165,7 +168,6 @@ def index():
                           InvoiceLine.product_name, InvoiceLine.amount)
                 .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
                 .where(Invoice.invoice_date >= m_start,
-                       Invoice.currency == "UGX",
                        Invoice.payment_status != "Reversed")):
             if d.year * 12 + d.month == target:
                 prodm[_pl.get(pid) or pname or "—"] += float(amt or 0)
@@ -345,7 +347,7 @@ def sales():
     # invoice headers -> total / customer / category / salesperson (net UGX)
     n_invoices = 0
     for i in db.session.scalars(db.select(Invoice).where(
-            Invoice.currency == "UGX", Invoice.payment_status != "Reversed",
+            Invoice.payment_status != "Reversed",
             Invoice.invoice_date.isnot(None))):
         if not (frm <= i.invoice_date <= to):
             continue
@@ -492,7 +494,7 @@ def sales_history():
         return render_template("reports/sales_history.html", has_data=False)
 
     def rev_of(i):
-        if i.currency == "UGX" and i.payment_status != "Reversed":
+        if i.payment_status != "Reversed":
             return float(i.untaxed or 0)
         return 0.0
 
@@ -518,8 +520,7 @@ def sales_history():
             total_rev += r
             if i.customer_id:
                 matched_rev += r
-        if (i.currency == "UGX"
-                and i.payment_status in ("Not Paid", "Partially Paid", "In Payment")
+        if (i.payment_status in ("Not Paid", "Partially Paid", "In Payment")
                 and float(i.total or 0) > 0):   # exclude credit notes
             t = float(i.total or 0)
             owe[i.customer_name] += t
@@ -546,12 +547,15 @@ def sales_history():
     pmap = _product_labels()
     sh = db.session.scalars(db.select(SalesHistory)).all()
     prod_year = defaultdict(lambda: defaultdict(float))
+    prod_qty2 = defaultdict(float)
     for s in sh:
         lbl = pmap.get(s.product_id)
         if lbl:
             prod_year[lbl][s.year] += float(s.revenue or 0)
+            prod_qty2[lbl] += float(s.quantity or 0)
     prod_years = sorted({s.year for s in sh})
-    top_products = top_cy(prod_year)
+    top_products = [(name, total, prod_qty2.get(name, 0.0), by)
+                    for name, total, by in top_cy(prod_year)]
 
     if request.args.get("export") == "csv":
         out = io.StringIO()
@@ -571,6 +575,172 @@ def sales_history():
         total_rev=total_rev, coverage=(matched_rev / total_rev * 100 if total_rev else 0))
 
 
+@bp.route("/top90")
+def top90():
+    """Top performers over the last 90 days — products, customers, reps,
+    distributors — plus a month-by-month revenue comparison (Stephan,
+    28 Jul 2026: the CEO dashboard tops show the last 3 days; the 90-day
+    view lives here). Ownership rules match the dashboard: invoices own
+    every day up to the latest invoice date, app orders own the days after;
+    for the monthly bars, invoices own whole months up to their latest
+    month, app orders the months beyond."""
+    from models import Invoice, InvoiceLine, Product
+    today = date.today()
+    win90 = today - timedelta(days=89)
+    last_inv_date = db.session.scalar(db.select(db.func.max(Invoice.invoice_date)))
+    inv_cutover = (last_inv_date.year * 12 + last_inv_date.month) if last_inv_date else 0
+    pmap = {p.id: p.description for p in db.session.scalars(db.select(Product))}
+
+    from services.revenue import export_customer_ids, dist_band
+    exp_ids = export_customer_ids()
+
+    cust = defaultdict(float)
+    reps = defaultdict(float)
+    dist = defaultdict(float)
+    dist_bands = {}                 # distributor name -> 'Export' | 'Local'
+    prod_v = defaultdict(float)
+    prod_q = defaultdict(float)
+    monthly = defaultdict(float)
+
+    for i in db.session.scalars(db.select(Invoice).where(
+            Invoice.payment_status != "Reversed",
+            Invoice.invoice_date.isnot(None))):
+        v = float(i.untaxed or 0)
+        monthly[i.invoice_date.year * 12 + i.invoice_date.month] += v
+        if i.invoice_date >= win90:
+            cust[i.customer_name or "—"] += v
+            if i.salesperson:
+                reps[i.salesperson] += v
+            if i.customer and (i.customer.segment or "") == "distributor":
+                dist[i.customer_name or "—"] += v
+                dist_bands[i.customer_name or "—"] = dist_band(i.customer, exp_ids)
+    for _d, pid, pname, amt, qty in db.session.execute(
+            db.select(Invoice.invoice_date, InvoiceLine.product_id,
+                      InvoiceLine.product_name, InvoiceLine.amount,
+                      InvoiceLine.quantity)
+            .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
+            .where(Invoice.invoice_date >= win90,
+                   Invoice.payment_status != "Reversed")):
+        label = pmap.get(pid) or pname or "—"
+        prod_v[label] += float(amt or 0)
+        prod_q[label] += float(qty or 0)
+
+    orders = db.session.scalars(db.select(SalesOrder)).all()
+    for o in orders:
+        if o.status not in CONFIRMED or not o.order_date:
+            continue
+        idx = o.order_date.year * 12 + o.order_date.month
+        v = net_ugx(o)
+        if idx > inv_cutover:
+            monthly[idx] += v
+        if o.order_date < win90:
+            continue
+        if last_inv_date and o.order_date <= last_inv_date:
+            continue
+        c = o.customer
+        cust[c.name if c else "—"] += v
+        sreps = [r for r in (c.reps if c else []) if r.role in ("rep", "telesales")]
+        reps[sreps[0].full_name if sreps else "Unassigned"] += v
+        if c and (c.segment or "") == "distributor":
+            dist[c.name] += v
+            dist_bands[c.name] = dist_band(c, exp_ids)
+        net = float(o.subtotal or 0)
+        rate = (v / net) if net else (1.0 if (o.currency or "UGX") == "UGX" else 0.0)
+        for l in o.lines:
+            nm = (l.product.description if getattr(l, "product", None) else None) \
+                or l.description or "—"
+            prod_v[nm] += float(l.line_total or 0) * rate
+            prod_q[nm] += float(l.delivered_qty or 0)
+
+    # Month-by-month bars: the last 13 months that have data, oldest first.
+    cur_idx = today.year * 12 + today.month
+    idxs = [i for i in range(cur_idx - 12, cur_idx + 1) if monthly.get(i)]
+    month_labels = [date((i - 1) // 12, (i - 1) % 12 + 1, 1).strftime("%b %y")
+                    for i in idxs]
+    month_values = [round(monthly[i]) for i in idxs]
+
+    # ---- Last-3-months comparison per product / customer / rep ----
+    # Month ownership: sales_history owns product months up to its latest
+    # month; invoice lines own months after that; app orders own months past
+    # the latest invoice. Customers and reps come from invoice headers, then
+    # app orders past the invoice cutover.
+    from models import SalesHistory
+    m3 = [cur_idx - 2, cur_idx - 1, cur_idx]
+    m3_labels = [date((i - 1) // 12, (i - 1) % 12 + 1, 1).strftime("%B %Y")
+                 for i in m3]
+    hist_cutover = db.session.scalar(
+        db.select(db.func.max(SalesHistory.year * 12 + SalesHistory.month))) or 0
+
+    prod_m = defaultdict(lambda: defaultdict(float))
+    cust_m = defaultdict(lambda: defaultdict(float))
+    rep_m = defaultdict(lambda: defaultdict(float))
+
+    for s in db.session.scalars(db.select(SalesHistory).where(
+            SalesHistory.month.isnot(None))):
+        idx = s.year * 12 + s.month
+        if idx in m3 and idx <= hist_cutover:
+            label = pmap.get(s.product_id)
+            if label:
+                prod_m[label][idx] += float(s.revenue or 0)
+    lo3 = date((m3[0] - 1) // 12, (m3[0] - 1) % 12 + 1, 1)
+    for d, pid, pname, amt in db.session.execute(
+            db.select(Invoice.invoice_date, InvoiceLine.product_id,
+                      InvoiceLine.product_name, InvoiceLine.amount)
+            .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
+            .where(Invoice.invoice_date >= lo3,
+                   Invoice.payment_status != "Reversed")):
+        idx = d.year * 12 + d.month
+        if idx in m3 and hist_cutover < idx <= inv_cutover:
+            prod_m[pmap.get(pid) or pname or "—"][idx] += float(amt or 0)
+    for i in db.session.scalars(db.select(Invoice).where(
+            Invoice.payment_status != "Reversed",
+            Invoice.invoice_date >= lo3)):
+        idx = i.invoice_date.year * 12 + i.invoice_date.month
+        if idx in m3 and idx <= inv_cutover:
+            v = float(i.untaxed or 0)
+            cust_m[i.customer_name or "—"][idx] += v
+            if i.salesperson:
+                rep_m[i.salesperson][idx] += v
+    for o in orders:
+        if o.status not in CONFIRMED or not o.order_date:
+            continue
+        idx = o.order_date.year * 12 + o.order_date.month
+        if idx not in m3 or idx <= inv_cutover:
+            continue
+        v = net_ugx(o)
+        c = o.customer
+        cust_m[c.name if c else "—"][idx] += v
+        sreps = [r for r in (c.reps if c else []) if r.role in ("rep", "telesales")]
+        rep_m[sreps[0].full_name if sreps else "Unassigned"][idx] += v
+        net = float(o.subtotal or 0)
+        rate = (v / net) if net else (1.0 if (o.currency or "UGX") == "UGX" else 0.0)
+        for l in o.lines:
+            nm = (l.product.description if getattr(l, "product", None) else None) \
+                or l.description or "—"
+            prod_m[nm][idx] += float(l.line_total or 0) * rate
+
+    def chart3(dd, n=10):
+        top = sorted(dd.items(), key=lambda kv: sum(kv[1].values()),
+                     reverse=True)[:n]
+        return {"labels": [k for k, _v in top],
+                "series": [[round(v.get(i, 0.0)) for _k, v in top] for i in m3]}
+
+    return render_template(
+        "reports/top90.html", win90=win90, today=today,
+        top_products=sorted(((k, v, prod_q.get(k, 0.0)) for k, v in prod_v.items()),
+                            key=lambda kv: kv[1], reverse=True)[:15],
+        top_customers=sorted(cust.items(), key=lambda kv: kv[1], reverse=True)[:15],
+        rep_leaders=sorted(reps.items(), key=lambda kv: kv[1], reverse=True)[:15],
+        top_distributors=sorted(
+            ((k, v, dist_bands.get(k, "Local")) for k, v in dist.items()),
+            key=lambda kv: kv[1], reverse=True)[:10],
+        dist_exp=sum(v for k, v in dist.items() if dist_bands.get(k) == "Export"),
+        dist_loc=sum(v for k, v in dist.items() if dist_bands.get(k) != "Export"),
+        month_labels=month_labels, month_values=month_values,
+        m3_labels=m3_labels, chart_products=chart3(prod_m),
+        chart_customers=chart3(cust_m), chart_reps=chart3(rep_m))
+
+
 @bp.route("/all-time")
 def all_time():
     """All-time performance: overall totals, best customers, products, months
@@ -585,6 +755,7 @@ def all_time():
     month_tot = defaultdict(float)
     cust = defaultdict(float)
     prod = defaultdict(float)
+    prod_q = defaultdict(float)
     total = 0.0
     for s in sh:
         rev = float(s.revenue or 0)
@@ -596,18 +767,20 @@ def all_time():
         lbl = pmap.get(s.product_id)
         if lbl:
             prod[lbl] += rev
+            prod_q[lbl] += float(s.quantity or 0)
 
     months = sorted(month_tot)
     best_month = max(month_tot.items(), key=lambda kv: kv[1]) if month_tot else None
     avg_month = (sum(month_tot.values()) / len(month_tot)) if month_tot else 0
     top_customers = sorted(cust.items(), key=lambda kv: kv[1], reverse=True)[:15]
-    top_products = sorted(prod.items(), key=lambda kv: kv[1], reverse=True)[:15]
+    top_products = sorted(((k, v, prod_q.get(k, 0.0)) for k, v in prod.items()),
+                          key=lambda kv: kv[1], reverse=True)[:15]
 
     # salespeople + invoice/credit totals from invoices
     sp = defaultdict(float)
     n_inv = n_cn = 0
     cn_total = 0.0
-    for i in db.session.scalars(db.select(Invoice).where(Invoice.currency == "UGX")):
+    for i in db.session.scalars(db.select(Invoice)):
         if i.payment_status == "Reversed":
             continue
         v = float(i.untaxed or 0)
@@ -827,9 +1000,9 @@ def customer_insights():
         # (invoices + credit notes) and product mix per year (from the pivot)
         from models import Invoice, SalesHistory
         for i in db.session.scalars(db.select(Invoice).filter_by(customer_id=selected.id)):
-            if i.currency == "UGX" and i.payment_status != "Reversed" and i.invoice_date:
+            if i.payment_status != "Reversed" and i.invoice_date:
                 hist_years[i.invoice_date.year] = hist_years.get(i.invoice_date.year, 0.0) + float(i.untaxed or 0)
-            if (i.currency == "UGX" and float(i.total or 0) > 0
+            if (float(i.total or 0) > 0
                     and i.payment_status in ("Not Paid", "Partially Paid", "In Payment")):
                 hist_outstanding += float(i.total or 0)
         hist_years = dict(sorted(hist_years.items()))

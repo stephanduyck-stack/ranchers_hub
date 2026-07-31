@@ -11,6 +11,18 @@
     {% elif order.status=='out_for_delivery' %}<span class="badge" style="background:#2E7D32">out for delivery</span>
     {% elif order.status=='delivered' %}<span class="badge badge-ok">delivered</span>{% endif %}
   </div>
+  {% if order.is_cod %}
+  <div class="alert alert-warning py-2 mt-2 mb-0">
+    <i class="bi bi-phone"></i> <strong>PAYMENT ON DELIVERY — MOBILE MONEY</strong><br>
+    <strong class="money">{{ order.total|money(order.currency) }}</strong> —
+    the customer pays by mobile money BEFORE you hand over the goods.
+    No cash. Enter the transaction reference when confirming delivery.
+    {% if order.momo_ref %}<div class="small mt-1"><i class="bi bi-check2-circle"></i> Ref: {{ order.momo_ref }}</div>{% endif %}
+  </div>
+  {% else %}
+  <div class="small text-muted mt-2"><i class="bi bi-credit-card"></i>
+    On account — no payment at delivery. Terms: {{ order.payment_terms or order.customer.payment_terms or '—' }}</div>
+  {% endif %}
   {% if order.delivery_address %}<div class="mt-2"><i class="bi bi-geo-alt text-rf-orange"></i> {{ order.delivery_address }}</div>{% endif %}
   {% if order.customer.latitude is not none %}
   <a class="btn btn-sm btn-outline-secondary mt-2" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination={{ order.customer.latitude }},{{ order.customer.longitude }}"><i class="bi bi-signpost-2"></i> Directions</a>
@@ -53,10 +65,24 @@
     <input class="d-none" type="file" id="podCam" name="pod" accept="image/*" capture="environment" onchange="podPicked(this)">
     <input class="d-none" type="file" id="podFile" name="pod" accept="image/*,application/pdf" onchange="podPicked(this)">
     <div id="podName" class="small text-muted">No photo or file chosen yet. A photo or PDF is required.</div>
+    {% if order.is_cod %}
+    <label class="form-label mt-2">Mobile money transaction reference <span class="text-danger">*</span></label>
+    <input class="form-control" name="momo_ref" id="momoRef" required minlength="4"
+           placeholder="e.g. MP260726.1234.A12345" autocomplete="off" oninput="podGate()">
+    <div class="form-text">Payment first. Delivery cannot be confirmed without the reference.</div>
+    {% endif %}
     <button class="btn btn-primary w-100 mt-3" id="podSubmit" disabled><i class="bi bi-check2-circle"></i> Confirm delivered</button>
   </div>
 </form>
 <script>
+function podGate(){
+  var btn = document.getElementById('podSubmit');
+  if (!btn) return;
+  var pod = window._podChosen === true;
+  var refEl = document.getElementById('momoRef');
+  var refOk = !refEl || refEl.value.trim().length >= 4;
+  btn.disabled = !(pod && refOk);
+}
 function podPicked(inp){
   // keep only the input the driver used (both share the name "pod")
   var cam=document.getElementById('podCam'), file=document.getElementById('podFile');
@@ -64,7 +90,8 @@ function podPicked(inp){
   other.value=''; other.disabled=true;
   var f = inp.files && inp.files[0];
   document.getElementById('podName').textContent = f ? ('Selected: '+f.name) : 'No photo or file chosen yet.';
-  document.getElementById('podSubmit').disabled = !f;
+  window._podChosen = !!f;
+  podGate();
 }
 </script>
 {% elif order.status=='delivered' %}

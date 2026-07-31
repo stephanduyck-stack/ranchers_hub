@@ -2,34 +2,47 @@
 {% block heading %}Admin{% endblock %}
 {% block content %}
 {% include "admin/_nav.html" %}
+{% set kind = kind|default('internal') %}
+{% set portal_new = (not user) and kind in ('customer', 'distributor') %}
 <div class="rf-card p-4" style="max-width:700px">
-  <h2 class="h6 mb-3">{{ 'Edit user' if user else 'New user' }}</h2>
+  <h2 class="h6 mb-3">{% if user %}Edit user{% elif kind == 'customer' %}New customer login{% elif kind == 'distributor' %}New distributor login{% else %}New user{% endif %}</h2>
   <form method="post">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if portal_new %}<input type="hidden" name="kind" value="{{ kind }}">{% endif %}
     <div class="row">
-      <div class="col-md-6 mb-3"><label class="form-label">Full name</label>
-        <input class="form-control" name="full_name" value="{{ user.full_name if user else '' }}" required></div>
+      <div class="col-md-6 mb-3"><label class="form-label">Full name {% if portal_new %}<span class="text-muted">(optional — contact person)</span>{% endif %}</label>
+        <input class="form-control" name="full_name" value="{{ user.full_name if user else '' }}" {{ 'required' if not portal_new }}></div>
       <div class="col-md-6 mb-3"><label class="form-label">Username</label>
         {% if user %}<input class="form-control" value="{{ user.username }}" disabled>
+        {% elif portal_new %}<input class="form-control" value="created from the {{ kind }} name" disabled>
+        <div class="form-text">Lowercase with dots: 'Cafe Javas' signs in as cafe.javas.</div>
         {% else %}<input class="form-control" name="username" required>{% endif %}</div>
     </div>
-    <div class="mb-3"><label class="form-label">Email</label>
+    <div class="mb-3"><label class="form-label">Email {% if portal_new %}<span class="text-muted">(blank uses the {{ kind }}'s email)</span>{% endif %}</label>
       <input class="form-control" name="email" value="{{ user.email if user else '' }}"></div>
     <div class="row">
+      {% if portal_new %}
+      <div class="col-md-6 mb-3"><label class="form-label">Role</label>
+        <input class="form-control text-capitalize" value="{{ kind }} (portal)" disabled>
+        <div class="form-text">Self-service portal login. The role is fixed on this tab.</div></div>
+      {% else %}
       <div class="col-md-6 mb-3"><label class="form-label">Role</label>
         <select class="form-select" name="role" id="roleSel" onchange="toggleCust()">
-          {% for r, lbl in [('admin','Admin'),('ceo','CEO'),('manager','Manager'),('sales_director','Sales director'),('sales_manager','Sales manager'),('rep','Rep'),('order_manager','Order manager'),('fulfillment_officer','Fulfilment officer'),('telesales','Telesales'),('pricing_officer','Pricing officer'),('dispatch_officer','Dispatch officer'),('delivery','Delivery driver'),('store_manager','Store manager'),('stock_auditor','Stock auditor'),('production_manager','Production manager'),('cfo','CFO'),('finance_manager','Finance manager'),('finance_clerk','Finance clerk'),('cashier','Cashier'),('finance_viewer','Finance viewer'),('customer','Customer (portal)')] %}
+          {% set roles = [('admin','Admin'),('ceo','CEO'),('manager','Manager'),('sales_director','Sales director'),('sales_manager','Sales manager'),('rep','Rep'),('order_manager','Order manager'),('fulfillment_officer','Fulfilment officer'),('telesales','Telesales'),('pricing_officer','Pricing officer'),('dispatch_officer','Dispatch officer'),('delivery','Delivery driver'),('store_manager','Store manager'),('stock_auditor','Stock auditor'),('production_manager','Production manager'),('cfo','CFO'),('finance_manager','Finance manager'),('finance_clerk','Finance clerk'),('cashier','Cashier'),('finance_viewer','Finance viewer')] %}
+          {% if user and user.role == 'customer' %}{% set roles = roles + [('customer','Customer (portal)')] %}{% endif %}
+          {% for r, lbl in roles %}
           <option value="{{ r }}" {{ 'selected' if user and user.role==r }}>{{ lbl }}</option>{% endfor %}
         </select>
-        <div class="form-text">Order manager: works the fulfilment inbox. Telesales: calls customers and logs activity. Customer: self-service portal login for one customer.
+        <div class="form-text">Order manager: works the fulfilment inbox. Telesales: calls customers and logs activity. Portal logins for customers and distributors are created from their own tabs on the Users page, or automatically when the customer is created.
         Finance: CFO approves and reviews; Finance manager posts journals and runs month-end; Finance clerk captures entries without posting rights; Cashier records receipts only (cash module, Phase 5); Finance viewer is read-only for audit and investors.</div></div>
-      <div class="col-12 mb-3 {{ '' if user and user.role=='customer' else 'd-none' }}" id="custLink">
-        <label class="form-label">Primary customer (for portal login)</label>
-        <select class="form-select" name="link_customer_id">
+      {% endif %}
+      <div class="col-12 mb-3 {{ '' if portal_new or (user and user.role=='customer') else 'd-none' }}" id="custLink">
+        <label class="form-label">{% if kind == 'distributor' %}Distributor{% elif kind == 'customer' %}Customer{% else %}Primary customer (for portal login){% endif %}</label>
+        <select class="form-select" name="link_customer_id" {{ 'required' if portal_new }}>
           <option value="">Choose…</option>
           {% for c in customers %}<option value="{{ c.id }}" {{ 'selected' if user and user.customer_id==c.id }}>{{ c.name }}</option>{% endfor %}
         </select>
-        <div class="form-text">The default outlet this login orders for.</div>
+        <div class="form-text">The default outlet this login orders for.{% if portal_new %} The username is derived from this name.{% endif %}</div>
         {% set outlet_ids = user.portal_customers|map(attribute='id')|list if user else [] %}
         <label class="form-label mt-2">Other outlets this login may also order for</label>
         <div class="input-group input-group-sm mb-2" style="max-width:340px">
@@ -47,11 +60,14 @@
           </div>
         </div>
         <div class="form-text">For a customer with several outlets that order separately: tick each outlet. The login picks the outlet when ordering.</div></div>
-      <div class="col-md-6 mb-3"><label class="form-label">Password {{ '(leave blank to keep)' if user else '(min 8)' }}</label>
-        <input class="form-control" type="password" name="password" {{ 'required' if not user }}></div>
+      <div class="col-md-6 mb-3"><label class="form-label">{% if portal_new %}Temporary password (min 8){% else %}Password {{ '(leave blank to keep)' if user else '(min 8)' }}{% endif %}</label>
+        <input class="form-control" type="password" name="password" {{ 'required' if not user }}>
+        {% if portal_new %}<div class="form-text">The user replaces it at first sign-in.</div>{% endif %}</div>
     </div>
+    {% if not portal_new %}
     <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="can_edit" id="ce" {{ 'checked' if user and user.can_edit }}>
       <label class="form-check-label" for="ce">Edit / pricing right (can change prices &amp; exchange rates)</label></div>
+    {% endif %}
     <div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="is_active" id="ia" {{ 'checked' if (user and user.is_active) or not user }}>
       <label class="form-check-label" for="ia">Active</label></div>
     <div class="mb-3 {{ '' if user and user.role=='rep' else 'd-none' }}" id="mgrWrap">
@@ -63,7 +79,7 @@
       {% if not managers %}<div class="form-text">No sales managers yet. Create a user with the Sales manager role first.</div>{% endif %}
     </div>
     {% set all_access_roles = ['admin','ceo','manager','sales_manager','order_manager','telesales','pricing_officer'] %}
-    <div class="mb-3 {{ 'd-none' if user and user.role in all_access_roles else '' }}" id="assignWrap"><label class="form-label">Assigned customers (for reps)</label>
+    <div class="mb-3 {{ 'd-none' if portal_new or (user and user.role in all_access_roles) else '' }}" id="assignWrap"><label class="form-label">Assigned customers (for reps)</label>
       {% set assigned = user.assigned_customers|map(attribute='id')|list if user else [] %}
       <div class="input-group input-group-sm mb-2" style="max-width:360px">
         <span class="input-group-text"><i class="bi bi-search"></i></span>
@@ -99,7 +115,9 @@
 <script>
 var ALL_ACCESS = ['admin','ceo','manager','sales_manager','order_manager','telesales','pricing_officer'];
 function toggleCust(){
-  var role = document.getElementById('roleSel').value;
+  var sel = document.getElementById('roleSel');
+  if (!sel) return;  // portal-login form: role is fixed, nothing to toggle
+  var role = sel.value;
   document.getElementById('custLink').classList.toggle('d-none', role !== 'customer');
   var allAccess = ALL_ACCESS.indexOf(role) !== -1 || role === 'customer';
   var wrap = document.getElementById('assignWrap'), note = document.getElementById('assignAllNote');

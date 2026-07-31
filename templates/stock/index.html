@@ -34,7 +34,7 @@
   {% for p in products %}
     <tr>
       <td class="fw-semibold">{{ p.article_no }}</td>
-      <td>{{ p.description }}{% if p.vat_applicable %} <span class="badge bg-secondary">VAT</span>{% endif %}</td>
+      <td>{{ p.description }}</td>
       <td class="small">{{ p.category.full_name if p.category else '—' }}</td>
       <td class="text-end">{{ lvl(p) }}</td>
       <td class="small">

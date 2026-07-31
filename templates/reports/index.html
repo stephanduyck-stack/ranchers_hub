@@ -79,6 +79,9 @@
 {% endif %}
 
 <div class="row g-3">
+  {% if can_view_report(current_user,'top90') %}<div class="col-lg-4"><a class="text-decoration-none" href="{{ url_for('reports.top90') }}">
+    <div class="rf-card p-4 h-100"><h2 class="h6"><i class="bi bi-trophy text-rf-orange"></i> Top performers (90 days)</h2>
+      <p class="small text-muted mb-0">Top products, customers, reps and distributors over the last 90 days, with a month-by-month revenue comparison.</p></div></a></div>{% endif %}
   {% if can_view_report(current_user,'fulfilment') %}<div class="col-lg-4"><a class="text-decoration-none" href="{{ url_for('reports.fulfilment') }}">
     <div class="rf-card p-4 h-100"><h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Daily fulfilment</h2>
       <p class="small text-muted mb-0">What was fulfilled vs ordered, fill rate, and the items missed (out of stock / not delivered).</p></div></a></div>{% endif %}

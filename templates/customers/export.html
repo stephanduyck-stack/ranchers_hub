@@ -9,8 +9,8 @@
       <div class="col-md-3">
         <label class="form-label small">Activity</label>
         <select class="form-select" name="status">
-          <option value="all">All</option>
-          <option value="active" selected>Active only</option>
+          <option value="all" selected>All (bought or not)</option>
+          <option value="active">Active only</option>
           <option value="inactive">Not active only</option>
         </select>
       </div>
@@ -31,9 +31,9 @@
       <div class="col-md-3">
         <label class="form-label small">Type</label>
         <select class="form-select" name="segment">
-          <option value="customer" selected>Customers</option>
+          <option value="customer">Customers</option>
           <option value="distributor">Distributors</option>
-          <option value="all">Both</option>
+          <option value="all" selected>Both</option>
         </select>
       </div>
       <div class="col-md-3">
@@ -43,6 +43,13 @@
           <option value="6" selected>Bought in last 6 months</option>
           <option value="12">Bought in last 12 months</option>
         </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small">Archived</label>
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" name="archived" value="1" id="inc_arch">
+          <label class="form-check-label small" for="inc_arch">Include archived</label>
+        </div>
       </div>
       <div class="col-md-3">
         <label class="form-label small">Sort by</label>

@@ -16,12 +16,27 @@ FEATURES = [
      "Send and log SMS to contacts. Needs an SMS gateway (set below)."),
     ("telephony", "Click-to-dial & call recording",
      "Attach call recordings to logged calls. Click-to-dial via phone links already works."),
+    ("stock_guard", "Stock guard at fulfilment",
+     "Fulfilment cannot complete an order for more than the stock on hand; only the "
+     "store manager adds stock. Untick only while loading opening balances."),
+    ("invoice_after_delivery", "Invoice after delivery (delivery-note flow)",
+     "Fulfilment produces only a delivery note; the driver delivers, the customer "
+     "confirms quantities and signs, the driver uploads the signed note, and the "
+     "invoicing clerk bills the ACCEPTED quantities from the invoicing queue. "
+     "Shortfalls carry a reason; returned goods go back to stock. Cuts credit "
+     "notes to post-invoice disputes only."),
 ]
+
+# Flags in this set are ON until an admin explicitly turns them off (controls,
+# not opt-in modules). Everything else stays opt-in (off until enabled).
+DEFAULT_ON = {"stock_guard"}
 
 
 def feature_on(name):
     row = db.session.get(Setting, f"feature:{name}")
-    return bool(row and row.value == "1")
+    if row is None:
+        return name in DEFAULT_ON
+    return row.value == "1"
 
 
 def all_features():

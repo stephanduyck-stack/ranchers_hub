@@ -115,9 +115,14 @@ def post_sale(order, user_id=None):
     cogs_by_key, cogs_movs, skipped = {}, [], []
     for l, qty, _n, _v in inv_lines:
         item = items_by_pid.get(l.product_id)
-        stock_qty = qty * (item.unit_conversion if item and hasattr(item, "unit_conversion") and item.unit_conversion else 1) if item else qty
-        if item and (item.qty_on_hand or 0) + 1e-9 >= qty and (item.value_on_hand or 0) > 0:
-            mv = inv.issue(item, qty, "sale", note=f"Sale {order.number}",
+        # Invoice-after-delivery (31 Jul 2026): variance the customer did not
+        # accept and the driver did not bring back (weighed short, loss) is
+        # gone goods — its cost joins this sale's COGS even though only the
+        # accepted quantity is billed. Margin stays honest instead of the
+        # missing kilos sitting in inventory forever.
+        cogs_qty = qty + (getattr(l, "cogs_extra_qty", 0) or 0)
+        if item and (item.qty_on_hand or 0) + 1e-9 >= cogs_qty and (item.value_on_hand or 0) > 0:
+            mv = inv.issue(item, cogs_qty, "sale", note=f"Sale {order.number}",
                            user_id=user_id, order_id=order.id, order_line_id=l.id)
             cogs_movs.append(mv)
             key = _cogs_key(l)

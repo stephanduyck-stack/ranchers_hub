@@ -5,7 +5,7 @@ order (with an optional LPO attachment), and track its status. Submitted orders
 wait for staff confirmation before entering fulfilment.
 """
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
@@ -30,8 +30,12 @@ bp = Blueprint("portal", __name__, url_prefix="/portal")
 # VAT-inclusive or shelf-price tier and then adding VAT would double-charge; if no
 # net-selling tier matches, the line is treated as unavailable (see _primary_tier
 # callers) rather than mispriced.
-_PREF_TIERS = ["excl_vat", "price_excl_vat", "price_kg", "price_pack", "price",
-               "dist_price", "wholesale", "retail"]
+# 27 Jul 2026: 'dist_price', 'wholesale', 'retail' removed — the distributor
+# workbook stores these VAT-inclusive (wholesale/retail match the B2B list's
+# incl-VAT and shelf prices). Distributor lists now carry a stored 'excl_vat'
+# tier (net = dist price / 1.18 for vatable products); pricing from the gross
+# tiers would have double-charged VAT.
+_PREF_TIERS = ["excl_vat", "price_excl_vat", "price_kg", "price_pack", "price"]
 _LPO_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".doc", ".docx", ".xls", ".xlsx"}
 
 
@@ -99,11 +103,26 @@ def home():
     orders = db.session.scalars(
         db.select(SalesOrder).filter_by(customer_id=cust.id)
         .order_by(SalesOrder.created_at.desc())).all()
+    # Customers see confirmed orders only (submitted onward). A draft is an
+    # attempt, not an order: surface at most one resume link (the newest draft
+    # that has items in the basket) and never list drafts as orders. Empty
+    # attempts older than a day are deleted here as housekeeping.
     drafts = [o for o in orders if o.status == "draft"]
+    resume_draft = next((o for o in drafts if o.lines), None)
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    stale = [o for o in drafts
+             if not o.lines and o.created_at and o.created_at < cutoff]
+    if stale:
+        for o in stale:
+            db.session.delete(o)
+        db.session.commit()
     current = [o for o in orders if o.status in (
         "submitted", "placed", "in_fulfillment", "pending",
         "ready_for_dispatch", "out_for_delivery", "dispatched")]
-    past = [o for o in orders if o.status in ("delivered", "fulfilled", "cancelled")]
+    # A cancelled order only counts as an order if it was submitted first;
+    # cancelled drafts are attempts and stay hidden.
+    past = [o for o in orders if o.status in ("delivered", "fulfilled")
+            or (o.status == "cancelled" and o.submitted_at)]
 
     seg = cust.segment or "customer"
     promos = [a for a in db.session.scalars(
@@ -120,7 +139,7 @@ def home():
     recent_msgs = list(reversed(recent_msgs))
     unread_msgs = sum(1 for m in recent_msgs if m.sender_type == "staff" and not m.read_by_customer)
     return render_template("portal/home.html", cust=cust, lists=_my_lists(),
-                           drafts=drafts, current=current, past=past, promos=promos,
+                           resume_draft=resume_draft, current=current, past=past, promos=promos,
                            offers=offers, recent_msgs=recent_msgs, unread_msgs=unread_msgs)
 
 
@@ -244,13 +263,22 @@ def order_new():
     if not lists:
         flash("No pricelist has been assigned to you yet. Please contact us.", "warning")
         return redirect(url_for("portal.home"))
-    if request.method == "POST" or len(lists) == 1:
+    _same = (len({(p.currency, bool(p.vat_applicable)) for p in lists}) == 1) if lists else False
+    if request.method == "POST" or len(lists) == 1 or _same:
         if request.method == "POST":
             pl = next((p for p in lists if p.id == int(request.form.get("source_id", 0))), None)
         else:
-            pl = lists[0]
+            pl = lists[0]   # the order grid spans all compatible lists anyway
         if pl is None:
             abort(400)
+        # Reuse an existing draft on the same pricelist instead of minting a
+        # new SO number per attempt (keeps abandoned attempts from piling up).
+        existing = db.session.scalars(
+            db.select(SalesOrder).filter_by(
+                customer_id=_active_id(), status="draft")
+            .order_by(SalesOrder.created_at.desc())).first()
+        if existing:
+            return redirect(url_for("portal.order", order_id=existing.id))
         cust = _customer()
         # H2/H3/M9: derive VAT/market the same way staff orders and offers do.
         vat_applicable, vat_rate = order_vat.derive_vat(pl, cust)
@@ -269,57 +297,92 @@ def order_new():
 @bp.route("/order/<int:order_id>")
 def order(order_id):
     o = _get_my_order(order_id)
+    # Opening the order counts as reading its messages (clears the unread
+    # badge and re-arms the one-email-per-unread-batch notification throttle).
+    changed = False
+    for m in db.session.scalars(
+            db.select(Message).filter_by(order_id=o.id, sender_type="staff")):
+        if not m.read_by_customer:
+            m.read_by_customer = True
+            changed = True
+    if changed:
+        db.session.commit()
     rows = []
     if o.status == "draft":
-        src = o.source_pricelist
-        tier = _primary_tier(src)
+        # 22 Jul 2026: one order draws from EVERY pricelist assigned to the
+        # customer (same currency/VAT); the first list carrying a product wins.
+        from services.allocation import combinable_lists
         qty_by_product = {l.product_id: l.quantity for l in o.lines}
-        for line in src.lines:
-            p = line.product
-            if not p.is_active:
-                continue
-            price = effective_line_price(line, tier.key) if tier else {"amount": None}
-            if price["amount"] is None:
-                continue
-            rows.append({"line": line, "product": p,
-                         "price": float(price["amount"]),
-                         "qty": qty_by_product.get(p.id, "")})
+        seen = set()
+        lists = combinable_lists(o)
+        for src in lists:
+            tier = _primary_tier(src)
+            for line in src.lines:
+                p = line.product
+                if not p.is_active or p.id in seen:
+                    continue
+                price = effective_line_price(line, tier.key) if tier else {"amount": None}
+                if price["amount"] is None:
+                    continue
+                seen.add(p.id)
+                rows.append({"line": line, "product": p,
+                             "price": float(price["amount"]),
+                             "qty": qty_by_product.get(p.id, ""),
+                             "box": float(line.box_small) if (line.box_small and not src.allow_small_orders) else None,
+                             "list_name": src.name if len(lists) > 1 else None})
     return render_template("portal/order.html", order=o, rows=rows)
 
 
 def _apply_quantities(order, form):
-    """Set order lines from the quantity grid (one input per pricelist line)."""
-    src = order.source_pricelist
-    tier = _primary_tier(src)
+    """Set order lines from the quantity grid (one input per pricelist line).
+    22 Jul 2026: the grid spans every pricelist assigned to the customer, so
+    inputs are applied across all of them; each line prices from its own
+    list's primary tier."""
+    from services.allocation import combinable_lists
     existing = {l.product_id: l for l in order.lines}
-    for pline in src.lines:
-        raw = form.get(f"qty_{pline.id}")
-        if raw is None:
-            continue
-        try:
-            q = float(raw)
-        except ValueError:
-            q = 0
-        ol = existing.get(pline.product_id)
-        if q > 0:
-            eff = effective_line_price(pline, tier.key) if tier else {"amount": None}
-            if eff["amount"] is None:
+    violations = []
+    for src in combinable_lists(order):
+        tier = _primary_tier(src)
+        # 22 Jul 2026: box sizes are minimum order quantities. Quantities must
+        # be multiples of the Small box unless the list allows small orders
+        # (Meat Supermarkets, Sokoni).
+        enforce_box = not src.allow_small_orders
+        for pline in src.lines:
+            raw = form.get(f"qty_{pline.id}")
+            if raw is None:
                 continue
-            price = Decimal(str(eff["amount"]))
-            if ol:
-                ol.quantity = q
-                ol.unit_price = price
-            else:
-                order.lines.append(SalesOrderLine(
-                    product_id=pline.product_id, description=pline.product.description,
-                    article_no=pline.product.article_no,
-                    pack_size=pline.pack_size or pline.product.pack_size,
-                    tier_label=tier.label if tier else "", quantity=q,
-                    unit_price=price,
-                    vat_applicable=bool(pline.product.vat_applicable) if pline.product else None,
-                    sort_order=pline.sort_order))
-        elif ol:
-            db.session.delete(ol)
+            try:
+                q = float(raw)
+            except ValueError:
+                q = 0
+            ol = existing.get(pline.product_id)
+            box = float(pline.box_small or 0)
+            if q > 0 and enforce_box and box > 0:
+                mult = q / box
+                if q + 1e-9 < box or abs(mult - round(mult)) > 1e-6:
+                    violations.append(
+                        f"{pline.product.article_no}: {q:g} (boxes of {box:g})")
+                    continue
+            if q > 0:
+                eff = effective_line_price(pline, tier.key) if tier else {"amount": None}
+                if eff["amount"] is None:
+                    continue
+                price = Decimal(str(eff["amount"]))
+                if ol:
+                    ol.quantity = q
+                    ol.unit_price = price
+                else:
+                    order.lines.append(SalesOrderLine(
+                        product_id=pline.product_id, description=pline.product.description,
+                        article_no=pline.product.article_no,
+                        pack_size=pline.pack_size or pline.product.pack_size,
+                        tier_label=tier.label if tier else "", quantity=q,
+                        unit_price=price,
+                        vat_applicable=bool(pline.product.vat_applicable) if pline.product else None,
+                        sort_order=pline.sort_order))
+            elif ol:
+                db.session.delete(ol)
+    return violations
 
 
 @bp.route("/order/<int:order_id>/save", methods=["POST"])
@@ -327,7 +390,13 @@ def save(order_id):
     o = _get_my_order(order_id)
     if o.status != "draft":
         abort(400)
-    _apply_quantities(o, request.form)
+    viol = _apply_quantities(o, request.form)
+    if viol:
+        db.session.rollback()
+        flash("These quantities must be full boxes — " + "; ".join(viol[:6])
+              + (" …" if len(viol) > 6 else "")
+              + ". Order in multiples of the box size.", "danger")
+        return redirect(url_for("portal.order", order_id=o.id))
     db.session.flush()
 
     if request.form.get("action") == "submit":
@@ -354,6 +423,11 @@ def save(order_id):
         o.status = "submitted"
         o.submitted_at = datetime.utcnow()
         log("order_submit", "sales_order", o.id, detail=f"{o.number} submitted by customer")
+        # Finance gate: a blocked/uncleared account raises a credit alert to
+        # CFO/finance manager the moment the order lands. The customer is not
+        # told here; finance decides first.
+        from services import credit
+        credit.raise_alert(o)
         db.session.commit()
         flash(f"Order {o.number} submitted. We will confirm it shortly.", "success")
         return redirect(url_for("portal.order", order_id=o.id))
@@ -462,11 +536,22 @@ def account():
         elif new != (request.form.get("confirm_password") or ""):
             flash("Passwords do not match.", "danger")
         else:
+            was_forced = bool(getattr(current_user, "must_change_password", False))
             current_user.password_hash = hash_password(new)
+            current_user.must_change_password = False
             db.session.commit()
+            log("password_change", "user", current_user.id, commit=True)
             flash("Password updated.", "success")
+            if was_forced:
+                return redirect(url_for("portal.home"))
         return redirect(url_for("portal.account"))
     return render_template("portal/account.html")
+
+
+@bp.route("/guide")
+def guide():
+    """Short operations manual for the portal (also sent in the welcome email)."""
+    return render_template("portal/guide.html")
 
 
 def _parse_date(s):

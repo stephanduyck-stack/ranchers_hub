@@ -1,0 +1,68 @@
+{% extends "portal/base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="rf-card p-4">
+      <h1 class="h5 mb-3">How the portal works</h1>
+
+      <h2 class="h6 mt-3">1. Your pricelist</h2>
+      <p class="mb-2">Open <a href="{{ url_for('portal.pricelist') }}">My Pricelist</a> to see your agreed prices. Prices update automatically when new lists take effect, so what you see is always current.</p>
+
+      <h2 class="h6 mt-3">2. Placing an order</h2>
+      <p class="mb-2">Click <a href="{{ url_for('portal.order_new') }}">New Order</a>, pick your products and quantities, and submit. You receive an order number immediately. Our team confirms the order before it enters fulfilment. You may attach your own LPO to the order.</p>
+
+      <h2 class="h6 mt-3">3. Tracking orders</h2>
+      <p class="mb-2">The <a href="{{ url_for('portal.home') }}">Home</a> page lists your draft, current, and past orders with live status: confirmed, in fulfilment, dispatched, delivered. Open any order to see the detail or download the order PDF.</p>
+
+      <h2 class="h6 mt-3">4. Messages</h2>
+      <p class="mb-2">Questions or changes on an order go through <a href="{{ url_for('portal.messages') }}">Messages</a>. Our team replies in the portal and you see a notification badge when there is an answer.</p>
+
+      <h2 class="h6 mt-3">5. Offers and promotions</h2>
+      <p class="mb-2">Offers we issue to you appear on your Home page. Review and accept them online; accepted offers convert into orders. Running promotions also show on the Home page.</p>
+
+      <h2 class="h6 mt-3">6. Your account</h2>
+      <p class="mb-2">Change your password any time under <a href="{{ url_for('portal.account') }}">Account</a>. If your login serves several outlets, use the outlet selector in the top bar to switch which outlet you are ordering for.</p>
+
+      <h2 class="h6 mt-3">Need help?</h2>
+      <p class="mb-0">Contact your sales representative, or send us a message in the portal.
+        New here? <a href="{{ url_for('portal.home', tour=1) }}">Replay the quick tour</a>.</p>
+    </div>
+
+    <div class="rf-card p-4 mt-3">
+      <h2 class="h5 mb-3"><i class="bi bi-question-circle text-rf-orange"></i> Frequently asked questions</h2>
+      <div class="accordion accordion-flush" id="faq">
+        {% set faqs = [
+          ('I forgot my password. What do I do?',
+           'Click "Forgot your password?" on the sign-in page and enter your username or email. You receive a secure link to choose a new password — the link works for 2 hours, so check the spam folder if nothing arrives within a few minutes. Your username stays the same.'),
+          ('The reset or activation link says it is no longer valid.',
+           'Links expire (reset after 2 hours, activation after 72) and work once. Request a fresh one via "Forgot your password?" on the sign-in page.'),
+          ('Where do my prices come from?',
+           'From the pricelist agreed for your account. When we issue a new list, the portal updates automatically — the price you see at ordering is the price on the order.'),
+          ('Can I change or cancel an order after submitting?',
+           'Send us a message on the order (open the order, or use Messages) as soon as possible. Once an order is being prepared, changes go through our team.'),
+          ('How do I know my order arrived and was accepted?',
+           'You receive an order number at submission. The order shows as confirmed on your Home page once our team accepts it, and the status updates through preparation, dispatch, and delivery.'),
+          ('Can I attach my own purchase order (LPO)?',
+           'Yes. When placing the order you can attach an LPO file (PDF, image, Word, or Excel).'),
+          ('I order for several outlets. How does that work?',
+           'One login serves all your outlets. Pick the outlet in the selector at the top of the page before ordering — each order books to the outlet you picked.'),
+          ('Is there VAT on the prices?',
+           'Pricelists state whether prices carry VAT. The order and its PDF show the VAT line explicitly, so what you approve is what gets invoiced.'),
+          ('Who do I contact for anything else?',
+           'Your sales representative, or send us a message in the portal — the team replies there.'),
+        ] %}
+        {% for q, a in faqs %}
+        <div class="accordion-item">
+          <h3 class="accordion-header">
+            <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#faq{{ loop.index }}">{{ q }}</button>
+          </h3>
+          <div id="faq{{ loop.index }}" class="accordion-collapse collapse" data-bs-parent="#faq">
+            <div class="accordion-body small">{{ a }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

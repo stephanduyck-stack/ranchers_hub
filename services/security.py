@@ -22,6 +22,69 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+# ---- portal activation tokens ----
+def _activation_serializer():
+    from flask import current_app
+    from itsdangerous import URLSafeTimedSerializer
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"],
+                                  salt="portal-activate")
+
+
+def make_activation_token(user):
+    """Signed, expiring token for the welcome email's activation link. The
+    token binds to a fragment of the current password hash, so it dies the
+    moment the password changes (first activation, PDF reset, or manual)."""
+    return _activation_serializer().dumps(
+        {"uid": user.id, "h": (user.password_hash or "")[-12:]})
+
+
+def verify_activation_token(token, max_age=72 * 3600):
+    """Return the User for a valid, unexpired, unused token; else None."""
+    from itsdangerous import BadSignature, SignatureExpired
+    try:
+        data = _activation_serializer().loads(token, max_age=max_age)
+    except (BadSignature, SignatureExpired):
+        return None
+    from extensions import db
+    from models import User
+    u = db.session.get(User, data.get("uid"))
+    if (u and u.is_active and u.role == "customer"
+            and (u.password_hash or "")[-12:] == data.get("h")):
+        return u
+    return None
+
+
+# ---- password reset tokens (any active user, shorter life) ----
+def _reset_serializer():
+    from flask import current_app
+    from itsdangerous import URLSafeTimedSerializer
+    return URLSafeTimedSerializer(current_app.config["SECRET_KEY"],
+                                  salt="password-reset")
+
+
+def make_reset_token(user):
+    """Signed token for the forgot-password email. Bound to the current
+    password hash, so setting a new password kills every earlier link."""
+    return _reset_serializer().dumps(
+        {"uid": user.id, "h": (user.password_hash or "")[-12:]})
+
+
+def verify_reset_token(token, max_age=2 * 3600):
+    """Return the User for a valid, unexpired, unused reset token; else None."""
+    from itsdangerous import BadSignature, SignatureExpired
+    try:
+        data = _reset_serializer().loads(token, max_age=max_age)
+    except (BadSignature, SignatureExpired):
+        return None
+    from extensions import db
+    from models import User
+    u = db.session.get(User, data.get("uid"))
+    if (u and u.is_active
+            and (u.password_hash or "")[-12:] == data.get("h")):
+        return u
+    return None
+
+
 # ---- route guards ----
 def roles_required(*roles):
     def decorator(fn):

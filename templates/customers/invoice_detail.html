@@ -51,18 +51,23 @@
   <h3 class="h6 mt-4">Items</h3>
   <div class="table-responsive">
   <table class="table table-sm align-middle mb-0">
-    <thead><tr><th>Product</th><th class="text-end">Qty</th><th class="text-end">Net amount</th></tr></thead>
+    <thead><tr><th>Product</th><th class="text-end">Qty</th><th class="text-end">Unit price (net)</th><th class="text-end">Net amount</th></tr></thead>
     <tbody>
     {% for l in inv.lines %}
       <tr>
         <td class="small">{{ l.product.description if l.product else l.product_name }}
           {% if l.product %}<span class="text-muted">· {{ l.product.article_no }}</span>{% endif %}</td>
         <td class="text-end small">{{ '%g'|format(l.quantity) if l.quantity is not none else '—' }}</td>
+        <td class="text-end money">
+          {%- if l.amount is not none and l.quantity and l.quantity|float != 0 -%}
+            {{ '{:,.0f}'.format(l.amount|float / l.quantity|float) }} {{ inv.currency }}
+          {%- else -%}—{%- endif -%}
+        </td>
         <td class="text-end money">{{ '{:,.0f}'.format(l.amount|float) if l.amount is not none else '—' }} {{ inv.currency }}</td>
       </tr>
     {% endfor %}
     </tbody>
-    <tfoot><tr><th class="small text-muted">{{ inv.lines|length }} line(s)</th><th></th>
+    <tfoot><tr><th class="small text-muted">{{ inv.lines|length }} line(s)</th><th></th><th></th>
       <th class="text-end money">{{ '{:,.0f}'.format(inv.lines|map(attribute='amount')|map('float')|sum) }} {{ inv.currency }}</th></tr></tfoot>
   </table>
   </div>

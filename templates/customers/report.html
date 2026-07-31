@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block heading %}{{ customer.name }}{% endblock %}
+
+{% macro ugx(v) %}UGX {{ '{:,.0f}'.format(v or 0) }}{% endmacro %}
+{% macro kg(v) %}{% if v and v < 0 %}<span class="text-danger" title="Net negative: credit notes / returns exceed purchases in this period">{{ '{:,.0f}'.format(v) }}</span>{% elif v %}{{ '{:,.0f}'.format(v) }}{% else %}<span class="text-muted">–</span>{% endif %}{% endmacro %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3 flex-wrap gap-2">
+  <div>
+    {% if customer.category %}<span class="badge bg-secondary">{{ customer.category.name }}</span>{% endif %}
+    {% if customer.segment == 'distributor' %}<span class="badge" style="background:#6E7149">distributor</span>{% endif %}
+    {% if customer.account_status in ('on_hold','blocked') %}<span class="badge bg-danger">{{ customer.account_status.replace('_',' ') }}</span>{% endif %}
+    {% if customer.payment_terms %}<span class="badge bg-light text-dark border">{{ customer.payment_terms }}</span>{% endif %}
+    {% if customer.archived %}<span class="badge bg-secondary">archived</span>{% endif %}
+    {% if approx_kg %}<span class="badge bg-light text-muted border" title="Some products have no pack weight on file; their quantities count 1 unit = 1 kg.">kg partly approximate</span>{% endif %}
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('customers.info', customer_id=customer.id) }}">
+      <i class="bi bi-person-lines-fill"></i> Details &amp; settings</a>
+  </div>
+</div>
+
+<!-- KPI tiles -->
+<div class="row g-3 mb-3">
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Sales this month</div>
+      <div class="h5 mb-0" style="color:#F47A21">{{ ugx(mtd) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Last month</div>
+      <div class="h5 mb-0" style="color:#6E7149">{{ ugx(last_month) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Outstanding</div>
+      <div class="h5 mb-0" style="color:{{ '#ED1C24' if credit_outstanding else '#2B2B2B' }}">{{ ugx(credit_outstanding) }}</div>
+      {% if credit_oldest_days %}<div class="small text-muted">oldest unpaid: {{ credit_oldest_days }} days</div>{% endif %}
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Last purchase</div>
+      <div class="h5 mb-0">{{ last_purchase.strftime('%d %b %Y') if last_purchase else '—' }}</div>
+      <div class="small text-muted">all-time sales: {{ ugx(all_time_rev) }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Weekly + monthly sales -->
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-calendar-week text-rf-orange"></i> Sales by week <span class="text-muted small fw-normal">(last 12 weeks, latest first · net UGX)</span></h2>
+      <canvas id="weekChart" height="80"></canvas>
+      <div class="table-responsive mt-2"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Week</th><th class="text-end">Invoices</th><th class="text-end">Kg</th><th class="text-end">Sales</th></tr></thead>
+        <tbody>
+        {% for r in weeks_rows %}
+          <tr><td>w/c {{ r.start.strftime('%d %b') }}</td>
+            <td class="text-end small text-muted">{{ r.n or '–' }}</td>
+            <td class="text-end">{{ kg(r.kg) }}</td>
+            <td class="text-end money">{{ ugx(r.rev) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-calendar3 text-rf-orange"></i> Sales by month <span class="text-muted small fw-normal">(last 12 months, latest first)</span></h2>
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Month</th><th class="text-end">Kg</th><th class="text-end">Sales</th></tr></thead>
+        <tbody>
+        {% for r in months_rows %}
+          <tr><td>{{ r.label }}</td><td class="text-end">{{ kg(r.kg) }}</td>
+            <td class="text-end money">{{ ugx(r.rev) }}</td></tr>
+        {% endfor %}
+          <tr class="fw-semibold border-top"><td>Total (12 months)</td>
+            <td class="text-end">{{ kg(win6_kg) }}</td>
+            <td class="text-end money">{{ ugx(win6_rev) }}</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<!-- Top + lapsed products -->
+<div class="row g-3 mt-0">
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-star text-rf-orange"></i> Top performing products <span class="text-muted small fw-normal">(last 90 days)</span></h2>
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th></th><th>Product</th><th class="text-end">Kg</th><th class="text-end">Sales</th></tr></thead>
+        <tbody>
+        {% for name, val, q in top_products %}
+          <tr><td class="small text-muted">{{ loop.index }}</td><td class="fw-semibold small">{{ name }}</td>
+            <td class="text-end">{{ kg(q) }}</td><td class="text-end money">{{ ugx(val) }}</td></tr>
+        {% else %}<tr><td colspan="4" class="text-muted small">No product-level sales recorded yet for this customer.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-slash-circle text-rf-orange"></i> No longer buying <span class="text-muted small fw-normal">(bought in the last 12 months, nothing in 6 weeks)</span></h2>
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Product</th><th class="text-end">Last bought</th><th class="text-end">Kg (12 mo)</th></tr></thead>
+        <tbody>
+        {% for r in lapsed %}
+          <tr><td class="small">{{ r.name }}</td>
+            <td class="text-end small text-muted">{{ r.last.strftime('%d %b %Y') }}</td>
+            <td class="text-end">{{ kg(r.kg) }}</td></tr>
+        {% else %}<tr><td colspan="3" class="text-muted small">Nothing dropped — every recent product still ordering.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<!-- Product kg by week -->
+<div class="rf-card p-3 mt-3">
+  <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Products — kg per week <span class="text-muted small fw-normal">(last 8 weeks, oldest to latest)</span></h2>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Product</th>
+      {% for w in wk8 %}<th class="text-end small">{{ w.strftime('%d %b') }}</th>{% endfor %}
+      <th class="text-end">Total kg</th></tr></thead>
+    <tbody>
+    {% for r in matrix_week %}
+      <tr><td class="small">{{ r.name }}</td>
+        {% for v in r.cells %}<td class="text-end small">{{ kg(v) }}</td>{% endfor %}
+        <td class="text-end fw-semibold">{{ kg(r.total) }}</td></tr>
+    {% else %}<tr><td colspan="{{ wk8|length + 2 }}" class="text-muted small">No product lines in the last 8 weeks.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% if mw_more %}<div class="small text-muted mt-1">{{ mw_more }} more products with smaller volumes not shown.</div>{% endif %}
+</div>
+
+<!-- Product kg by month -->
+<div class="rf-card p-3 mt-3">
+  <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Products — kg per month <span class="text-muted small fw-normal">(last 12 months, oldest to latest · net of credit notes, booked in the month the credit note lands)</span></h2>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Product</th>
+      {% for m in month_cols %}<th class="text-end small">{{ m }}</th>{% endfor %}
+      <th class="text-end">Total kg</th></tr></thead>
+    <tbody>
+    {% for r in matrix_month %}
+      <tr><td class="small">{{ r.name }}</td>
+        {% for v in r.cells %}<td class="text-end small">{{ kg(v) }}</td>{% endfor %}
+        <td class="text-end fw-semibold">{{ kg(r.total) }}</td></tr>
+    {% else %}<tr><td colspan="{{ month_cols|length + 2 }}" class="text-muted small">No product history for this customer yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% if mm_more %}<div class="small text-muted mt-1">{{ mm_more }} more products with smaller volumes not shown.</div>{% endif %}
+</div>
+
+<!-- Invoices -->
+<div class="rf-card p-3 mt-3">
+  <h2 class="h6"><i class="bi bi-receipt text-rf-orange"></i> Invoices
+    <span class="text-muted small fw-normal">(latest {{ inv_list|length }} of {{ '{:,}'.format(inv_all_count) }} · click a row for the lines)</span></h2>
+  <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0">
+    <thead><tr><th>Number</th><th>Date</th><th>Status</th><th class="text-end">Net</th><th class="text-end">Total</th></tr></thead>
+    <tbody>
+    {% for i in inv_list %}
+      <tr style="cursor:pointer" onclick="window.location='{{ url_for('customers.invoice_detail', inv_id=i.id) }}'">
+        <td><a href="{{ url_for('customers.invoice_detail', inv_id=i.id) }}" class="fw-semibold text-decoration-none">{{ i.number }}</a></td>
+        <td class="small">{{ i.invoice_date.strftime('%d %b %Y') if i.invoice_date else '—' }}</td>
+        <td><span class="badge {{ 'bg-success' if i.payment_status == 'Paid'
+              else 'bg-warning text-dark' if i.payment_status in ('Partially Paid', 'In Payment')
+              else 'bg-secondary' if i.payment_status in ('Cancelled', 'Reversed')
+              else 'bg-danger' }}">{{ i.payment_status or '—' }}</span></td>
+        <td class="text-end small text-muted">{{ '{:,.0f}'.format(i.untaxed or 0) }}</td>
+        <td class="text-end money">{{ ugx(i.total) }}</td></tr>
+    {% else %}<tr><td colspan="5" class="text-muted small">No invoices on record for this customer.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+(function(){
+  const ctx = document.getElementById('weekChart');
+  if (!ctx) return;
+  const vals = {{ week_vals|tojson }};
+  new Chart(ctx, {
+    type: 'bar',
+    data: { labels: {{ week_labels|tojson }},
+      datasets: [{ data: vals, borderRadius: 4,
+        backgroundColor: vals.map((_,i)=> i===vals.length-1 ? '#F47A21' : '#e7d9c6') }] },
+    options: { plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => 'UGX ' + Number(c.parsed.y).toLocaleString() } } },
+      scales: { y: { ticks: { callback: v => 'UGX ' + Number(v).toLocaleString() } } } }
+  });
+})();
+</script>
+{% endblock %}

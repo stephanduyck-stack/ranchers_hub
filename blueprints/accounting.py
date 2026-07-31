@@ -198,13 +198,20 @@ def invoices():
     total = db.session.scalar(db.select(db.func.count()).select_from(q.subquery())) or 0
     rows = db.session.scalars(q.limit(PAGE).offset((page - 1) * PAGE)).all()
     # Completed orders with no invoice (pre-Phase-3 history): offer a backfill.
-    uninvoiced = db.session.scalars(
-        db.select(SalesOrder).where(
-            SalesOrder.status.in_(("ready_for_dispatch", "out_for_delivery",
-                                   "delivered", "fulfilled")),
-            SalesOrder.stock_deducted.is_(True),
-            ~SalesOrder.id.in_(db.select(AccInvoice.order_id)
-                               .where(AccInvoice.order_id.isnot(None))))).all()
+    # Invoice-after-delivery (31 Jul 2026): while the flow is on, un-invoiced
+    # in-flight orders are NORMAL (they wait for the clerk and the signed
+    # note) — the backfill must not sweep them into blind invoices at
+    # dispatched quantities. Only accepted-recorded orders qualify.
+    uq = db.select(SalesOrder).where(
+        SalesOrder.status.in_(("ready_for_dispatch", "out_for_delivery",
+                               "delivered", "fulfilled")),
+        SalesOrder.stock_deducted.is_(True),
+        ~SalesOrder.id.in_(db.select(AccInvoice.order_id)
+                           .where(AccInvoice.order_id.isnot(None))))
+    from services.features import feature_on as _fon
+    if _fon("invoice_after_delivery"):
+        uq = uq.where(SalesOrder.accepted_recorded_at.is_not(None))
+    uninvoiced = db.session.scalars(uq).all()
     return render_template("accounting/invoices.html",
                            invoices=rows, page=page, total=total,
                            pages=(total + PAGE - 1) // PAGE, efris=st,
@@ -255,13 +262,18 @@ def invoices_backfill():
     _require_post()
     from services import sale_posting, efris as efris_svc
     done, failed = 0, []
-    orders = db.session.scalars(
-        db.select(SalesOrder).where(
-            SalesOrder.status.in_(("ready_for_dispatch", "out_for_delivery",
-                                   "delivered", "fulfilled")),
-            SalesOrder.stock_deducted.is_(True),
-            ~SalesOrder.id.in_(db.select(AccInvoice.order_id)
-                               .where(AccInvoice.order_id.isnot(None))))).all()
+    # Mirror of the listing filter above: with invoice-after-delivery on,
+    # orders waiting for the clerk's accepted quantities are off limits.
+    bq = db.select(SalesOrder).where(
+        SalesOrder.status.in_(("ready_for_dispatch", "out_for_delivery",
+                               "delivered", "fulfilled")),
+        SalesOrder.stock_deducted.is_(True),
+        ~SalesOrder.id.in_(db.select(AccInvoice.order_id)
+                           .where(AccInvoice.order_id.isnot(None))))
+    from services.features import feature_on as _fon
+    if _fon("invoice_after_delivery"):
+        bq = bq.where(SalesOrder.accepted_recorded_at.is_not(None))
+    orders = db.session.scalars(bq).all()
     for o in orders:
         try:
             invoice = sale_posting.post_sale(o, user_id=current_user.id)

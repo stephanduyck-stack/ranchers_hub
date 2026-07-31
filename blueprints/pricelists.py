@@ -29,7 +29,9 @@ def _get_list(list_id, customer=False):
 
 # Order groups appear in on the Pricelists tab.
 GROUP_ORDER = ["Business to Business", "Business to Distributor", "Betar",
-               "Ranchers Finest Meat Supermarkets", "Export", "Other"]
+               "Ranchers Finest Meat Supermarkets",
+               "Export — Business to Business",
+               "Export — Business to Distributor", "Export", "Other"]
 
 
 def derived_group(name):
@@ -37,6 +39,11 @@ def derived_group(name):
     n = (name or "")
     low = n.lower()
     if "export" in low:
+        # 27 Jul 2026: export lists split the same way as local ones.
+        if "business to business" in low:
+            return "Export — Business to Business"
+        if "distributor" in low:
+            return "Export — Business to Distributor"
         return "Export"
     if "business to business" in low:
         return "Business to Business"
@@ -98,6 +105,28 @@ def set_vat(list_id):
         detail=f"VAT {'on' if pl.vat_applicable else 'off'} for '{pl.name}'")
     db.session.commit()
     flash(f"VAT {'enabled' if pl.vat_applicable else 'switched off'} for '{pl.name}'.", "success")
+    if pl.is_customer:
+        return redirect(url_for("customer_pricelists.detail", list_id=pl.id))
+    return redirect(url_for("pricelists.detail", list_id=pl.id))
+
+
+@bp.route("/<int:list_id>/small-orders", methods=["POST"])
+@login_required
+def set_small_orders(list_id):
+    """Pricing officer/admin toggle: does this list allow orders below the box
+    sizes? Off = quantities must be full-box multiples (22 Jul 2026)."""
+    if not (current_user.is_pricing_officer or current_user.is_admin):
+        abort(403)
+    pl = db.session.get(Pricelist, list_id)
+    if pl is None:
+        abort(404)
+    assert_can_see_pricelist(current_user, pl)
+    pl.allow_small_orders = request.form.get("allow_small_orders") == "1"
+    log("pricelist_small_orders", "pricelist", pl.id,
+        new_value="small orders allowed" if pl.allow_small_orders else "box quantities only",
+        detail=f"'{pl.name}'")
+    db.session.commit()
+    flash(f"'{pl.name}': {'small orders allowed' if pl.allow_small_orders else 'box quantities only'}.", "success")
     if pl.is_customer:
         return redirect(url_for("customer_pricelists.detail", list_id=pl.id))
     return redirect(url_for("pricelists.detail", list_id=pl.id))

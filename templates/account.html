@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block heading %}My account{% endblock %}
 {% block content %}
+{% if current_user.must_change_password %}
+<div class="alert alert-warning">Your account uses a temporary password.
+  Set your own password below before using the portal.</div>
+{% endif %}
 <div class="row">
   <div class="col-lg-5">
     <div class="rf-card p-4">

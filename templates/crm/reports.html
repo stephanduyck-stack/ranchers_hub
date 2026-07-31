@@ -47,10 +47,10 @@
     <thead><tr><th>Customer</th><th>Category</th><th>Last contact</th><th></th></tr></thead>
     <tbody>
     {% for r in not_contacted %}
-      <tr><td><a href="{{ url_for('customers.detail', customer_id=r.customer.id) }}#activity" class="fw-semibold">{{ r.customer.name }}</a></td>
+      <tr><td><a href="{{ url_for('customers.info', customer_id=r.customer.id) }}#activity" class="fw-semibold">{{ r.customer.name }}</a></td>
         <td class="small">{{ r.customer.category.name if r.customer.category else '—' }}</td>
         <td class="small">{{ r.last.strftime('%d %b %Y') if r.last else 'never' }}</td>
-        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('customers.detail', customer_id=r.customer.id) }}#activity">Log contact</a></td></tr>
+        <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('customers.info', customer_id=r.customer.id) }}#activity">Log contact</a></td></tr>
     {% else %}<tr><td colspan="4" class="text-center text-muted py-3">Everyone has been contacted recently. 🎉</td></tr>{% endfor %}
     </tbody>
   </table></div>

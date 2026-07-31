@@ -10,7 +10,7 @@
     {% for a in rows %}
       <tr>
         <td class="small">{{ a.next_action_date.strftime('%d %b %Y') }}</td>
-        <td><a href="{{ url_for('customers.detail', customer_id=a.customer_id) }}#activity" class="fw-semibold">{{ a.customer.name }}</a></td>
+        <td><a href="{{ url_for('customers.info', customer_id=a.customer_id) }}#activity" class="fw-semibold">{{ a.customer.name }}</a></td>
         <td>{{ a.next_action }}{% if a.outcome %}<div class="small text-muted">last: {{ a.kind_label }} — {{ a.outcome }}</div>{% endif %}</td>
         <td class="small">{{ a.kind_label }} {{ a.occurred_at.strftime('%d %b') }}</td>
         <td class="small">{{ a.user.full_name if a.user else '—' }}</td>

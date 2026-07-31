@@ -46,3 +46,21 @@ def net_ugx(order):
     except Exception:
         pass
     return 0.0
+
+def export_customer_ids():
+    """IDs of customers allocated to any pricelist whose name contains
+    'Export'. The pricing team marks export accounts by allocating the
+    Export pricelists, so the allocation IS the flag; nothing new to
+    maintain. Used to split distributor sales into Export vs Local on the
+    dashboards (Stephan, 30 Jul 2026)."""
+    from extensions import db
+    from models import Pricelist, customer_pricelist_alloc
+    return {cid for (cid,) in db.session.execute(
+        db.select(customer_pricelist_alloc.c.customer_id).distinct()
+        .join(Pricelist, Pricelist.id == customer_pricelist_alloc.c.pricelist_id)
+        .where(db.func.lower(Pricelist.name).like("%export%")))}
+
+
+def dist_band(customer, exp_ids):
+    """'Export' or 'Local' for a distributor customer."""
+    return "Export" if (customer is not None and customer.id in exp_ids) else "Local"

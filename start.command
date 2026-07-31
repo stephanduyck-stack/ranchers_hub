@@ -4,6 +4,20 @@
 cd "$(dirname "$0")" || exit 1
 
 echo "Preparing the Ranchers Finest pricing app..."
+
+# The hardened app refuses to boot without a SECRET_KEY (by design).
+# This launcher is for a server where SECRET_KEY is set in the environment.
+# For local testing on a Mac, use start_local.command instead.
+if [ -z "$SECRET_KEY" ]; then
+  echo ""
+  echo "  STOP: no SECRET_KEY is set, so the app would refuse to start."
+  echo "  For local testing, close this window and double-click"
+  echo "  start_local.command instead (it sets a dev-only key)."
+  echo ""
+  read -r -p "Press Enter to close..."
+  exit 1
+fi
+
 python3 -m pip install -q -r requirements.txt 2>/dev/null
 
 # First run: create the database, a default admin, and load the pricelists.

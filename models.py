@@ -94,6 +94,9 @@ class User(UserMixin, db.Model):
     last_login = db.Column(db.DateTime)
     failed_attempts = db.Column(db.Integer, default=0)
     locked_until = db.Column(db.DateTime)
+    # Auto-provisioned portal logins start with the default password and must
+    # set their own before using the app (enforced app-wide in auth).
+    must_change_password = db.Column(db.Boolean, nullable=False, default=False)
 
     assigned_customers = db.relationship(
         "Customer", secondary=customer_reps, back_populates="reps"
@@ -216,9 +219,11 @@ class User(UserMixin, db.Model):
 
     @property
     def sees_all_customers(self):
-        """Roles that work the whole customer base (not just assigned)."""
+        """Roles that work the whole customer base (not just assigned).
+        The CFO reads the whole base like they read every order —
+        oversight, not workflow (added 8 Jul 2026)."""
         return self.role in ("admin", "ceo", "manager", "order_manager", "telesales",
-                             "pricing_officer", "sales_director")
+                             "pricing_officer", "sales_director", "cfo")
 
     @property
     def can_fulfill(self):
@@ -232,6 +237,12 @@ class User(UserMixin, db.Model):
         """Who reviews and accepts orders (stock + credit check): order managers,
         managers, admins. Kept separate from fulfilment."""
         return self.role in ("order_manager", "manager", "admin", "ceo")
+
+    @property
+    def can_clear_credit(self):
+        """Who ticks the finance credit clearance on a customer profile and
+        decides credit alerts: CEO, CFO, finance manager (and admin)."""
+        return self.role in ("ceo", "cfo", "finance_manager", "admin")
 
     @property
     def sees_all_orders(self):
@@ -338,6 +349,37 @@ class Customer(db.Model):
     credit_approved = db.Column(db.Boolean, default=False)
     account_status = db.Column(db.String(12), default="ok")   # ok | on_hold | blocked
     account_note = db.Column(db.String(255))                  # reason for hold/block
+    # Finance credit clearance (20 Jul 2026): tick set only by CEO/CFO/finance
+    # manager (User.can_clear_credit) allowing this customer's orders to be
+    # accepted for fulfilment. Manual control until the accounting AR link
+    # exists. Distinct from credit_approved, which is the pricing officer's
+    # one-time onboarding approval of the credit terms.
+    credit_cleared = db.Column(db.Boolean, nullable=False, default=False)
+    credit_cleared_by_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="SET NULL"))
+    credit_cleared_at = db.Column(db.DateTime)
+    # 21 Jul 2026: does this customer accept back orders? Ticked: fulfilment
+    # shortfalls raise a confirmed back order automatically. Unticked: no back
+    # order is ever created for this customer; the balance is simply dropped.
+    backorders_allowed = db.Column(db.Boolean, nullable=False, default=True)
+    # Credit limit engine (21 Jul 2026): whole UGX. NULL or 0 = no limit set,
+    # no automatic block. Set only by CEO/CFO/finance manager. When set, the
+    # account blocks automatically once the outstanding balance (imported
+    # unpaid history + accounting-module unpaid invoices) reaches the limit,
+    # and acceptance requires headroom for the order's own value. Only the
+    # same roles release a held order (per order, from the credit alerts
+    # queue).
+    credit_limit_ugx = db.Column(db.Integer)
+    # Odoo receivable snapshot (27 Jul 2026): the accounting system's own
+    # per-customer balance from the res.partner export — the TRUE value
+    # outstanding (invoices minus payments minus credits), unlike the stale
+    # payment-status flags. Refreshed whenever the contact export is loaded.
+    odoo_receivable = db.Column(db.Numeric(18, 2))
+    odoo_receivable_at = db.Column(db.Date)
+    # Days credit limit (21 Jul 2026): NULL or 0 = none. When set, the account
+    # blocks automatically once ANY unpaid invoice is older than this many
+    # days — whichever of the two limits trips first kicks in. Same
+    # CEO/CFO/finance-manager release applies.
+    credit_days = db.Column(db.Integer)
     created_by_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     archived = db.Column(db.Boolean, default=False, index=True)
     # Own-shop flag (accounting Phase 7): set, this "customer" is one of our
@@ -366,6 +408,7 @@ class Customer(db.Model):
 
     category = db.relationship("CustomerCategory")
     created_by = db.relationship("User", foreign_keys=[created_by_id])
+    credit_cleared_by = db.relationship("User", foreign_keys=[credit_cleared_by_id])
 
     reps = db.relationship("User", secondary=customer_reps, back_populates="assigned_customers")
     pricelists = db.relationship("Pricelist", back_populates="customer",
@@ -421,6 +464,10 @@ class Pricelist(db.Model):
     source_file = db.Column(db.String(255))
 
     is_customer = db.Column(db.Boolean, default=False, index=True)
+    # 22 Jul 2026: box quantities are the minimum order quantity. Lines with a
+    # Small box size only accept multiples of it — unless this list allows
+    # small orders (Meat Supermarkets, Sokoni).
+    allow_small_orders = db.Column(db.Boolean, nullable=False, default=False)
     archived = db.Column(db.Boolean, default=False, index=True)
     approval_status = db.Column(db.String(12), default="approved", index=True)  # approved | pending | declined
     group_name = db.Column(db.String(96))   # display grouping on the Pricelists tab
@@ -775,9 +822,30 @@ class SalesOrder(db.Model):
     assigned_at = db.Column(db.DateTime)
     driver_accepted_at = db.Column(db.DateTime)
     pod_filename = db.Column(db.String(255))   # signed delivery-note photo (proof of delivery)
+    # Mobile money on delivery (26 Jul 2026): no cash on trucks. For COD
+    # orders the customer pays by mobile money and the driver enters the
+    # transaction reference BEFORE handing over the goods; delivery cannot be
+    # confirmed without it. Finance matches references to the MoMo statement.
+    momo_ref = db.Column(db.String(40))
+    momo_ref_at = db.Column(db.DateTime)
     backorder_of_id = db.Column(db.Integer, db.ForeignKey("sales_order.id"), index=True)
     bo_confirm_state = db.Column(db.String(12))  # for backorders: proposed | confirmed | declined
     stock_deducted = db.Column(db.Boolean, default=False)  # stock taken off at fulfilment
+    # Credit-limit release (21 Jul 2026): CEO/CFO/finance manager may release
+    # ONE held order past the customer's credit limit from the alerts queue.
+    credit_override_by_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="SET NULL"))
+    credit_override_at = db.Column(db.DateTime)
+    # Invoice-after-delivery flow (31 Jul 2026): the invoicing clerk records
+    # the quantities the customer accepted (from the signed delivery note)
+    # and only then posts the fiscal invoice. Kills the credit-note volume
+    # that direct invoicing at fulfilment produced.
+    accepted_recorded_at = db.Column(db.DateTime)
+    accepted_recorded_by_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="SET NULL"))
+    # Physical signed delivery note filed in finance: the filing number is the
+    # proof-of-delivery reference, linked from the invoice.
+    dnote_filing_no = db.Column(db.String(20), unique=True)
+    dnote_filed_at = db.Column(db.DateTime)
+    dnote_filed_by_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="SET NULL"))
     # customer delivery feedback (rated from the portal after delivery)
     rating = db.Column(db.Integer)              # 1-5 stars
     rating_comment = db.Column(db.Text)
@@ -787,6 +855,8 @@ class SalesOrder(db.Model):
 
     customer = db.relationship("Customer")
     accepted_by = db.relationship("User", foreign_keys=[accepted_by_id])
+    accepted_recorded_by = db.relationship("User", foreign_keys=[accepted_recorded_by_id])
+    dnote_filed_by = db.relationship("User", foreign_keys=[dnote_filed_by_id])
     assigned_driver = db.relationship("User", foreign_keys=[assigned_driver_id])
     source_pricelist = db.relationship("Pricelist")
     parent_order = db.relationship("SalesOrder", remote_side=[id], backref="backorders")
@@ -822,6 +892,29 @@ class SalesOrder(db.Model):
         return self.backorders[0] if self.backorders else None
 
     @property
+    def is_cod(self):
+        """Cash on delivery (26 Jul 2026): the payment terms read cash/COD,
+        or the customer runs on the 1-day cash rule from the credit load.
+        Drives the collect banner on the driver's screen and the payment
+        line on the delivery note. Prepaid terms are NOT cod — that money
+        moved before the truck did."""
+        t = (self.payment_terms
+             or (self.customer.payment_terms if self.customer else "") or "").lower()
+        if "prepaid" in t or "pre-paid" in t:
+            return False
+        if "cash" in t or "cod" in t:
+            return True
+        return bool(self.customer and (self.customer.credit_days or 0) == 1)
+
+    @property
+    def short_stock_lines(self):
+        """Lines whose ordered quantity exceeds current stock on hand.
+        Guides the order manager at acceptance; this is not a reservation."""
+        return [l for l in self.lines
+                if l.product is not None
+                and (l.quantity or 0) > (l.product.stock_on_hand or 0)]
+
+    @property
     def subtotal(self):
         return sum((l.line_total or 0) for l in self.lines)
 
@@ -844,15 +937,69 @@ class SalesOrder(db.Model):
     def total(self):
         return self.subtotal + self.vat_amount
 
+    # ---- dispatched view (31 Jul 2026): what physically left on the truck.
+    # The delivery note prints these; once the clerk records accepted
+    # quantities, subtotal/total switch to the accepted (billed) view while
+    # the delivery note keeps showing what was sent.
+    @property
+    def dispatched_subtotal(self):
+        return sum((l.dispatched_total or 0) for l in self.lines)
+
+    @property
+    def dispatched_vatable_subtotal(self):
+        if not self.vat_applicable:
+            return 0
+        return sum((l.dispatched_total or 0) for l in self.lines if l.is_vatable)
+
+    @property
+    def dispatched_vat_amount(self):
+        return vat_money(self.dispatched_vatable_subtotal, self.vat_rate)
+
+    @property
+    def dispatched_total(self):
+        return self.dispatched_subtotal + self.dispatched_vat_amount
+
+    @property
+    def has_variance(self):
+        return any((l.variance_qty or 0) > 1e-9 for l in self.lines)
+
+    @property
+    def variance_lines(self):
+        return [l for l in self.lines if (l.variance_qty or 0) > 1e-9]
+
     @property
     def is_editable(self):
         return self.status == "draft"
 
     @property
     def is_amendable(self):
-        """Staff may amend lines/quantities until the order leaves for delivery."""
+        """Staff may amend order details (delivery date, address, PO, notes)
+        until the order leaves for delivery."""
         return self.status in ("draft", "submitted", "placed",
                                "in_fulfillment", "pending")
+
+    @property
+    def is_lines_amendable(self):
+        """Lines are frozen at acceptance (21 Jul 2026): once the order
+        manager accepts, no item is added, removed, or re-quantified. Under-
+        delivery goes through the To deliver column and the back-order route,
+        keeping every ordered item on record."""
+        return self.status in ("draft", "submitted", "placed")
+
+
+# Delivery variance reasons (31 Jul 2026). The bool says whether goods
+# physically come back to the store with the driver: True re-adds the
+# shortfall to stock at invoicing; False means the goods are gone (scale
+# difference at the customer, or a loss) and the shortfall stays out of
+# stock but carries its cost into COGS so the margin stays honest.
+VARIANCE_REASONS = {
+    "weighed_short":    ("Weighed short at customer — no goods returned", False),
+    "rejected_quality": ("Rejected on quality — returned to store", True),
+    "damaged":          ("Damaged in transit — returned to store", True),
+    "short_loaded":     ("Short loaded — never left the store", True),
+    "not_ordered":      ("Refused, not ordered — returned to store", True),
+    "other_loss":       ("Other — no goods returned", False),
+}
 
 
 class SalesOrderLine(db.Model):
@@ -865,13 +1012,22 @@ class SalesOrderLine(db.Model):
     pack_size = db.Column(db.String(64))
     tier_label = db.Column(db.String(96))
     quantity = db.Column(db.Float, default=1)            # ordered quantity
-    fulfilled_qty = db.Column(db.Float)                  # delivered quantity (set in fulfilment)
+    fulfilled_qty = db.Column(db.Float)                  # dispatched quantity (set in fulfilment)
+    # Invoice-after-delivery (31 Jul 2026): quantity the customer accepted on
+    # the signed delivery note, keyed by the invoicing clerk. The invoice
+    # bills this; the gap to fulfilled_qty is the delivery variance.
+    accepted_qty = db.Column(db.Float)
+    variance_reason = db.Column(db.String(24))           # key into VARIANCE_REASONS
     unit_price = db.Column(db.Numeric(16, 4))
     discount_pct = db.Column(db.Float, default=0)
     is_fixed = db.Column(db.Boolean, default=False)
     fixed_note = db.Column(db.String(255))
     # VAT status snapshotted at line creation (M8). Null on old rows -> live.
     vat_applicable = db.Column(db.Boolean, nullable=True)
+    # Per-line tax category chosen at order entry (21 Jul 2026):
+    # vat (18%) | exempt (–) | zero (0%, export orders only). NULL = derive
+    # from the export flag / product VAT flag (see effective_tax_category).
+    tax_category = db.Column(db.String(8))
     # available | out_of_stock | not_delivered  (set during fulfilment)
     availability = db.Column(db.String(16), default="available")
     expected_restock = db.Column(db.Date)            # optional: when an OOS item is expected back
@@ -882,19 +1038,77 @@ class SalesOrderLine(db.Model):
     product = db.relationship("Product")
 
     @property
-    def is_vatable(self):
+    def effective_tax_category(self):
+        """The line's tax category: 'vat' (18%), 'exempt' (–) or 'zero' (0%,
+        export). Explicit per-line choice first (21 Jul 2026 — products are
+        auto-created from pricelists, so their VAT flags are not gospel);
+        otherwise derived: zero on export orders, else the snapshot/product
+        VAT flag decides between vat and exempt."""
+        if self.tax_category in ("vat", "exempt", "zero"):
+            return self.tax_category
+        o = self.order
+        if o is not None and not o.vat_applicable:
+            return "zero" if (o.market or "local") == "export" else "exempt"
         if self.vat_applicable is not None:
-            return bool(self.vat_applicable)
-        return bool(self.product and self.product.vat_applicable)
+            return "vat" if self.vat_applicable else "exempt"
+        return "vat" if (self.product and self.product.vat_applicable) else "exempt"
+
+    @property
+    def is_vatable(self):
+        return self.effective_tax_category == "vat"
 
     @property
     def delivered_qty(self):
-        """Quantity used for value: the delivered amount once set, else ordered."""
+        """Quantity used for value: accepted (once the clerk records it from
+        the signed delivery note), else dispatched, else ordered."""
+        if self.accepted_qty is not None:
+            return self.accepted_qty
         return self.fulfilled_qty if self.fulfilled_qty is not None else (self.quantity or 0)
+
+    @property
+    def dispatched_qty(self):
+        """What physically left on the truck — the delivery note prints this,
+        whether or not accepted quantities were recorded later."""
+        return self.fulfilled_qty if self.fulfilled_qty is not None else (self.quantity or 0)
+
+    @property
+    def variance_qty(self):
+        """Dispatched minus accepted; 0 until the clerk records acceptance."""
+        if self.accepted_qty is None:
+            return 0
+        return max((self.dispatched_qty or 0) - (self.accepted_qty or 0), 0)
+
+    @property
+    def variance_returns_goods(self):
+        entry = VARIANCE_REASONS.get(self.variance_reason or "")
+        return bool(entry and entry[1])
+
+    @property
+    def variance_reason_label(self):
+        entry = VARIANCE_REASONS.get(self.variance_reason or "")
+        return entry[0] if entry else (self.variance_reason or "")
+
+    @property
+    def cogs_extra_qty(self):
+        """Variance the customer never accepted AND the driver never brought
+        back (weighed short, other loss): the goods are gone, so their cost
+        joins the COGS of the sale instead of pretending they still exist."""
+        v = self.variance_qty or 0
+        if v <= 0 or self.variance_returns_goods:
+            return 0
+        return v
 
     @property
     def line_total(self):
         return line_money(self.unit_price, self.delivered_qty, self.discount_pct)
+
+    @property
+    def dispatched_total(self):
+        return line_money(self.unit_price, self.dispatched_qty, self.discount_pct)
+
+    @property
+    def variance_value(self):
+        return line_money(self.unit_price, self.variance_qty, self.discount_pct)
 
     @property
     def ordered_total(self):
@@ -973,9 +1187,38 @@ class Message(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     read_by_customer = db.Column(db.Boolean, default=False)
     read_by_staff = db.Column(db.Boolean, default=False)
+    # When this staff message was covered by a notification email (sent or
+    # folded into one). NULL = not yet notified; the sweep in services/notify
+    # emails messages still unread ~10 minutes after creation.
+    emailed_at = db.Column(db.DateTime)
 
     customer = db.relationship("Customer")
     order = db.relationship("SalesOrder")
+
+
+class CreditAlert(db.Model):
+    """An order held for finance because the customer's account is blocked or
+    not credit-cleared. One open alert per order. Finance (User.can_clear_credit)
+    decides: unblock (account back to ok and cleared, order may be accepted) or
+    keep blocked (the customer and the reps are told the order is on hold)."""
+    __tablename__ = "credit_alert"
+    id = db.Column(db.Integer, primary_key=True)
+    order_id = db.Column(db.Integer, db.ForeignKey("sales_order.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customer.id", ondelete="CASCADE"),
+                            nullable=False, index=True)
+    reason = db.Column(db.String(24), nullable=False)   # blocked | not_cleared
+    status = db.Column(db.String(16), nullable=False, default="open", index=True)
+    # open | unblocked | kept_blocked
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    emailed_at = db.Column(db.DateTime)                 # finance alert mail sent
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="SET NULL"))
+    decided_at = db.Column(db.DateTime)
+    note = db.Column(db.String(255))                    # finance's reason/comment
+
+    order = db.relationship("SalesOrder")
+    customer = db.relationship("Customer")
+    decided_by = db.relationship("User", foreign_keys=[decided_by_id])
 
 
 class Contact(db.Model):
@@ -1257,6 +1500,26 @@ class SalesHistory(db.Model):
 
     customer = db.relationship("Customer")
     linked_product = db.relationship("Product")
+
+
+class CustomerPayment(db.Model):
+    """Customer payments imported from the Odoo 'Payments (account.payment)'
+    export (27 Jul 2026). One row per posted payment, upserted by number.
+    Statement companion to Invoice: together they carry both sides of the
+    customer ledger. Analytics/statements only — the app's own receipts live
+    in AccReceipt."""
+    __tablename__ = "customer_payment"
+    id = db.Column(db.Integer, primary_key=True)
+    number = db.Column(db.String(40), unique=True, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("customer.id"), index=True)
+    customer_name = db.Column(db.String(180), index=True)
+    payment_date = db.Column(db.Date, index=True)
+    amount = db.Column(db.Numeric(18, 2))
+    journal = db.Column(db.String(80))       # bank / cash / mobile money book
+    method = db.Column(db.String(40))
+    status = db.Column(db.String(20))
+
+    customer = db.relationship("Customer")
 
 
 class Invoice(db.Model):

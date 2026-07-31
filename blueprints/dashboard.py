@@ -22,6 +22,10 @@ QUEUE = ("submitted", "placed", "in_fulfillment", "pending", "ready_for_dispatch
 @bp.route("/dashboard")
 @login_required
 def home():
+    # 21 Jul 2026: the fulfilment officer's whole world is the orders inbox —
+    # no dashboard, straight there.
+    if getattr(current_user, "is_fulfilment_officer", False):
+        return redirect(url_for("orders.index"))
     if getattr(current_user, "is_store_manager", False):
         return _store_dashboard()
     if getattr(current_user, "is_stock_auditor", False):
@@ -324,11 +328,16 @@ def _ceo_dashboard():
     def _i2d(idx):
         return date((idx - 1) // 12, (idx - 1) % 12 + 1, 1)
 
+    # Export vs Local distributor split (Stephan, 30 Jul 2026): a customer
+    # allocated to an Export pricelist counts as export.
+    from services.revenue import export_customer_ids, dist_band
+    exp_ids = export_customer_ids()
+
     def _chan(c):
         if c is None:
             return "Other"
         if (c.segment or "customer") == "distributor":
-            return "Distributors"
+            return f"{dist_band(c, exp_ids)} distributors"
         return (c.category.name if c.category else None) or "Other"
 
     pmap = {p.id: p.description for p in db.session.scalars(db.select(Product))}
@@ -338,15 +347,15 @@ def _ceo_dashboard():
     rep_rev = defaultdict(float)
     dist_rev = defaultdict(float)
     prod_rev = defaultdict(float)
+    prod_qty = defaultdict(float)
 
     # Uploaded invoices (net UGX) own every month up to the latest invoice.
-    # TODO(H5): non-UGX invoices are dropped here. The Invoice model stores only
-    # a currency, no rate column, so converting historical foreign invoices needs
-    # a dated rate lookup per row. Left as UGX-only until an invoice rate is
-    # captured on import; live foreign orders are handled by net_ugx().
+    # H5 resolved 8 Jul 2026: the Odoo "Signed" amount columns are company
+    # currency (UGX) for every invoice, including USD ones — the currency
+    # column is informational only. No rate lookup needed; no currency filter.
     inv_daily = defaultdict(float)            # current-month daily curve
     for i in db.session.scalars(db.select(Invoice).where(
-            Invoice.currency == "UGX", Invoice.payment_status != "Reversed",
+            Invoice.payment_status != "Reversed",
             Invoice.invoice_date.isnot(None))):
         idx = i.invoice_date.year * 12 + i.invoice_date.month
         v = float(i.untaxed or 0)
@@ -386,6 +395,7 @@ def _ceo_dashboard():
                 nm = (l.product.description if getattr(l, "product", None) else None) \
                     or l.description or "—"
                 prod_rev[nm] += float(l.line_total or 0) * rate
+                prod_qty[nm] += float(l.delivered_qty or 0)
 
     # Top products (last 3 months): the monthly history pivot owns its months
     # (catalogue only); itemized invoice lines own the months after it.
@@ -395,21 +405,23 @@ def _ceo_dashboard():
             l = pmap.get(s.product_id)
             if l:
                 prod_rev[l] += float(s.revenue or 0)
+                prod_qty[l] += float(s.quantity or 0)
     if inv_cutover > hist_cutover:
         from models import InvoiceLine
         lo_idx = max(recent_lo, hist_cutover + 1)
         lo_date = _i2d(lo_idx)
-        for d, pid, pname, amt in db.session.execute(
+        for d, pid, pname, amt, qty in db.session.execute(
                 db.select(Invoice.invoice_date, InvoiceLine.product_id,
-                          InvoiceLine.product_name, InvoiceLine.amount)
+                          InvoiceLine.product_name, InvoiceLine.amount,
+                          InvoiceLine.quantity)
                 .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
                 .where(Invoice.invoice_date >= lo_date,
-                       Invoice.currency == "UGX",
                        Invoice.payment_status != "Reversed")):
             idx = d.year * 12 + d.month
             if hist_cutover < idx <= min(target, inv_cutover):
                 label = pmap.get(pid) or pname or "—"
                 prod_rev[label] += float(amt or 0)
+                prod_qty[label] += float(qty or 0)
 
     # Main chart: sales PER DAY for the current month (Stephan, 6 Jul 2026 —
     # was a cumulative curve). Invoices carry daily dates, so the current
@@ -448,12 +460,71 @@ def _ceo_dashboard():
     deltas = {"mtd": _pct(rev["this_month"], rev["last_month"])}
 
     channel = dict(sorted(chan.items(), key=lambda kv: kv[1], reverse=True))
-    dist_mtd = channel.get("Distributors", 0.0)
+    dist_exp_mtd = channel.get("Export distributors", 0.0)
+    dist_loc_mtd = channel.get("Local distributors", 0.0)
+    dist_mtd = dist_exp_mtd + dist_loc_mtd
     direct_mtd = sum(channel.values()) - dist_mtd
-    top_customers = sorted(cust_rev.items(), key=lambda kv: kv[1], reverse=True)[:10]
-    rep_leaders = sorted(rep_rev.items(), key=lambda kv: kv[1], reverse=True)[:10]
-    top_products = sorted(prod_rev.items(), key=lambda kv: kv[1], reverse=True)[:10]
-    top_distributors = sorted(dist_rev.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    # Top lists: LAST 30 DAYS (Stephan, 28 Jul 2026 — the 90-day view lives in
+    # Reports > Top performers). Ownership is daily here: invoices own every
+    # day up to the latest invoice date; app orders own the days after it, so
+    # nothing double-counts when yesterday's orders arrive as invoices.
+    win3 = today - timedelta(days=29)
+    c3 = defaultdict(float)
+    r3 = defaultdict(float)
+    d3 = defaultdict(float)
+    d3_band = {}                    # distributor name -> 'Export' | 'Local'
+    p3v = defaultdict(float)
+    p3q = defaultdict(float)
+    from models import InvoiceLine
+    for i in db.session.scalars(db.select(Invoice).where(
+            Invoice.payment_status != "Reversed",
+            Invoice.invoice_date >= win3)):
+        v = float(i.untaxed or 0)
+        c3[i.customer_name or "—"] += v
+        if i.salesperson:
+            r3[i.salesperson] += v
+        if i.customer and (i.customer.segment or "") == "distributor":
+            d3[i.customer_name or "—"] += v
+            d3_band[i.customer_name or "—"] = dist_band(i.customer, exp_ids)
+    for _d, pid, pname, amt, qty in db.session.execute(
+            db.select(Invoice.invoice_date, InvoiceLine.product_id,
+                      InvoiceLine.product_name, InvoiceLine.amount,
+                      InvoiceLine.quantity)
+            .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
+            .where(Invoice.invoice_date >= win3,
+                   Invoice.payment_status != "Reversed")):
+        label = pmap.get(pid) or pname or "—"
+        p3v[label] += float(amt or 0)
+        p3q[label] += float(qty or 0)
+    for o in booked:
+        if o.order_date < win3:
+            continue
+        if last_inv_date and o.order_date <= last_inv_date:
+            continue
+        v = _ugx(o)
+        c = o.customer
+        c3[c.name if c else "—"] += v
+        sreps = [r for r in (c.reps if c else []) if r.role in ("rep", "telesales")]
+        r3[sreps[0].full_name if sreps else "Unassigned"] += v
+        if c and (c.segment or "") == "distributor":
+            d3[c.name] += v
+            d3_band[c.name] = dist_band(c, exp_ids)
+        net = float(o.subtotal or 0)
+        rate = (v / net) if net else (1.0 if (o.currency or "UGX") == "UGX" else 0.0)
+        for l in o.lines:
+            nm = (l.product.description if getattr(l, "product", None) else None) \
+                or l.description or "—"
+            p3v[nm] += float(l.line_total or 0) * rate
+            p3q[nm] += float(l.delivered_qty or 0)
+    top_customers = sorted(c3.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    rep_leaders = sorted(r3.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    top_products = sorted(((k, v, p3q.get(k, 0.0)) for k, v in p3v.items()),
+                          key=lambda kv: kv[1], reverse=True)[:10]
+    top_distributors = sorted(
+        ((k, v, d3_band.get(k, "Local")) for k, v in d3.items()),
+        key=lambda kv: kv[1], reverse=True)[:10]
+    d30_exp = sum(v for k, v in d3.items() if d3_band.get(k) == "Export")
+    d30_loc = sum(v for k, v in d3.items() if d3_band.get(k) != "Export")
 
     # ---- Risk & health strip ----
     customers = db.session.scalars(
@@ -502,7 +573,6 @@ def _ceo_dashboard():
     # outstanding receivables (positive unpaid invoices, excl credit notes)
     outstanding_total = db.session.scalar(
         db.select(db.func.sum(Invoice.total)).where(
-            Invoice.currency == "UGX",
             Invoice.payment_status.in_(("Not Paid", "Partially Paid", "In Payment")),
             Invoice.total > 0)) or 0
 
@@ -513,7 +583,9 @@ def _ceo_dashboard():
         channel_values=[round(v) for v in channel.values()],
         top_customers=top_customers, rep_leaders=rep_leaders,
         top_products=top_products, top_distributors=top_distributors,
-        dist_mtd=dist_mtd, direct_mtd=direct_mtd, risk=risk,
+        dist_mtd=dist_mtd, direct_mtd=direct_mtd,
+        dist_exp_mtd=dist_exp_mtd, dist_loc_mtd=dist_loc_mtd,
+        d30_exp=d30_exp, d30_loc=d30_loc, risk=risk,
         recent_comments=recent_comments, n_customers=len(customers),
         outstanding_total=float(outstanding_total))
 
@@ -658,7 +730,7 @@ def _rep_dashboard(orders, today):
     last_idx = {}
     if assigned_ids:
         for i in db.session.scalars(db.select(Invoice).where(
-                Invoice.customer_id.in_(assigned_ids), Invoice.currency == "UGX",
+                Invoice.customer_id.in_(assigned_ids),
                 Invoice.payment_status != "Reversed", Invoice.invoice_date.isnot(None))):
             idx = i.invoice_date.year * 12 + i.invoice_date.month
             v = float(i.untaxed or 0)

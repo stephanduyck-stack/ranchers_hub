@@ -76,6 +76,18 @@ def deliver(order_id):
     o = _my_order(order_id)
     if o.status != "out_for_delivery":
         abort(400)
+    # Mobile money on delivery (26 Jul 2026): no cash on trucks. A COD order
+    # cannot be confirmed delivered without the mobile money transaction
+    # reference — payment happens BEFORE the goods change hands.
+    if o.is_cod:
+        ref = (request.form.get("momo_ref") or "").strip()
+        if len(ref) < 4:
+            flash("Payment first: enter the mobile money transaction reference "
+                  "before confirming delivery. No cash — the customer pays by "
+                  "mobile money.", "danger")
+            return redirect(url_for("driver.order", order_id=o.id))
+        o.momo_ref = ref[:40]
+        o.momo_ref_at = datetime.utcnow()
     file = request.files.get("pod")
     if not file or not file.filename:
         flash("Attach a photo of the signed delivery note to confirm delivery.", "warning")
@@ -95,12 +107,13 @@ def deliver(order_id):
         detail=f"{o.number} delivered by {current_user.full_name} (POD attached)")
     # Alert the customer and invite a rating.
     from models import Message
-    db.session.add(Message(
+    m = Message(
         customer_id=o.customer_id, sender_type="staff",
         sender_user_id=current_user.id, sender_name="Ranchers Finest",
         body=(f"Your order {o.number} has been delivered. We hope all is well! "
               f"Tap this message to open the order and rate your delivery."),
-        order_id=o.id, read_by_customer=False, read_by_staff=True))
+        order_id=o.id, read_by_customer=False, read_by_staff=True)
+    db.session.add(m)
     db.session.commit()
     flash("Delivery confirmed. Thank you.", "success")
     return redirect(url_for("driver.order", order_id=o.id))

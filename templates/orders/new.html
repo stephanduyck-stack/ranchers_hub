@@ -15,11 +15,11 @@
         {% if not customers %}<div class="form-text text-danger">You have no customers assigned. Ask a manager to assign you under the Reps tab.</div>{% endif %}
       </div>
       <div class="col-md-6 mb-3"><label class="form-label">Price from list</label>
-        <select class="form-select" name="source_id" id="sourceSel" required disabled>
+        <select class="form-select" name="source_id" id="sourceSel" disabled>
           <option value="">Choose a customer first…</option>
           {% for p in lists %}<option value="{{ p.id }}" data-cust="" hidden>{{ p.name }} ({{ p.currency }}){{ ' · customer' if p.is_customer }}</option>{% endfor %}
         </select>
-        <div class="form-text">Only the pricelists allocated to the chosen customer are shown.</div></div>
+        <div class="form-text">Leave on Automatic — the order draws from every list assigned to the customer. Pick one only to restrict, or when local and USD lists both exist.</div></div>
     </div>
     <div class="row">
       <div class="col-md-4 mb-3"><label class="form-label">Currency</label>
@@ -69,7 +69,7 @@ function filterLists(){
   });
   srcSel.value = "";
   srcSel.disabled = !cid;
-  srcSel.options[0].textContent = cid ? (shown ? "Choose…" : "No pricelists allocated to this customer") : "Choose a customer first…";
+  srcSel.options[0].textContent = cid ? (shown ? "Automatic — all assigned lists" : "No pricelists allocated to this customer") : "Choose a customer first…";
 }
 custSel.addEventListener('change', filterLists);
 filterLists();

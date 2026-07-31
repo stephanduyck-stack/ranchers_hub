@@ -79,7 +79,7 @@ def add_contact(customer_id):
     name = (request.form.get("name") or "").strip()
     if not name:
         flash("A contact name is required.", "warning")
-        return redirect(url_for("customers.detail", customer_id=c.id))
+        return redirect(url_for("customers.info", customer_id=c.id))
     primary = request.form.get("is_primary") == "1"
     if primary:
         for k in c.contacts:
@@ -91,7 +91,7 @@ def add_contact(customer_id):
     log("contact_add", "customer", c.id, detail=f"{c.name}: contact {name}")
     db.session.commit()
     flash("Contact added.", "success")
-    return redirect(url_for("customers.detail", customer_id=c.id))
+    return redirect(url_for("customers.info", customer_id=c.id))
 
 
 # crm.edit_contact removed 3 Jul 2026 (QA audit M2): the customer page offers
@@ -113,7 +113,7 @@ def delete_contact(contact_id):
     log("contact_delete", "customer", c.id, detail=f"{c.name}: removed contact {name}")
     db.session.commit()
     flash("Contact removed.", "success")
-    return redirect(url_for("customers.detail", customer_id=c.id))
+    return redirect(url_for("customers.info", customer_id=c.id))
 
 
 # --------------------------------------------------------------------------- #
@@ -162,7 +162,7 @@ def add_activity(customer_id):
         detail=f"{c.name}: {kind} logged by {current_user.full_name}")
     db.session.commit()
     flash(f"{act.kind_label} logged.", "success")
-    return redirect(url_for("customers.detail", customer_id=c.id) + "#activity")
+    return redirect(url_for("customers.info", customer_id=c.id) + "#activity")
 
 
 @bp.route("/activity/<int:activity_id>/done", methods=["POST"])
@@ -176,7 +176,7 @@ def toggle_followup(activity_id):
     a.follow_up_done = not a.follow_up_done
     db.session.commit()
     flash("Follow-up updated.", "success")
-    nxt = request.form.get("next") or url_for("customers.detail", customer_id=a.customer_id)
+    nxt = request.form.get("next") or url_for("customers.info", customer_id=a.customer_id)
     return redirect(nxt)
 
 
@@ -193,7 +193,7 @@ def delete_activity(activity_id):
     log("activity_delete", "customer", cid, detail="activity removed")
     db.session.commit()
     flash("Activity removed.", "success")
-    return redirect(url_for("customers.detail", customer_id=cid))
+    return redirect(url_for("customers.info", customer_id=cid))
 
 
 # --------------------------------------------------------------------------- #
@@ -268,7 +268,7 @@ def add_deal(customer_id):
     title = (request.form.get("title") or "").strip()
     if not title:
         flash("A deal title is required.", "warning")
-        return redirect(url_for("customers.detail", customer_id=c.id))
+        return redirect(url_for("customers.info", customer_id=c.id))
     stage = request.form.get("stage") if request.form.get("stage") in Deal.STAGES else "Lead"
     db.session.add(Deal(
         customer_id=c.id, title=title, value=_parse_money("value"),
@@ -279,7 +279,7 @@ def add_deal(customer_id):
     log("deal_add", "customer", c.id, detail=f"{c.name}: deal '{title}'")
     db.session.commit()
     flash("Deal added.", "success")
-    return redirect(url_for("customers.detail", customer_id=c.id) + "#deals")
+    return redirect(url_for("customers.info", customer_id=c.id) + "#deals")
 
 
 @bp.route("/deal/<int:deal_id>/update", methods=["POST"])
@@ -310,7 +310,7 @@ def update_deal(deal_id):
     db.session.commit()
     flash("Deal updated.", "success")
     return redirect(request.form.get("next") or
-                    url_for("customers.detail", customer_id=d.customer_id) + "#deals")
+                    url_for("customers.info", customer_id=d.customer_id) + "#deals")
 
 
 @bp.route("/deal/<int:deal_id>/delete", methods=["POST"])
@@ -327,7 +327,7 @@ def delete_deal(deal_id):
     log("deal_delete", "customer", cid, detail="deal removed")
     db.session.commit()
     flash("Deal removed.", "success")
-    return redirect(url_for("customers.detail", customer_id=cid) + "#deals")
+    return redirect(url_for("customers.info", customer_id=cid) + "#deals")
 
 
 # --------------------------------------------------------------------------- #

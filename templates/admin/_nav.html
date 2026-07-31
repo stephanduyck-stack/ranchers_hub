@@ -8,7 +8,7 @@
   <li class="nav-item"><a class="nav-link {{ 'active' if 'features' in ep }}" href="{{ url_for('admin.features') }}">Features</a></li>
   <li class="nav-item"><a class="nav-link {{ 'active' if ep.startswith('exchange_rates') }}" href="{{ url_for('exchange_rates.index') }}">Exchange rates</a></li>
   <li class="nav-item"><a class="nav-link {{ 'active' if 'audit' in ep }}" href="{{ url_for('admin.audit') }}">Audit log</a></li>
-  <li class="nav-item"><a class="nav-link {{ 'active' if 'sales_import' in ep }}" href="{{ url_for('admin.sales_import') }}">Import daily sales</a></li>
+  <li class="nav-item"><a class="nav-link {{ 'active' if ep == 'customers.finance_uploads' }}" href="{{ url_for('customers.finance_uploads') }}">Daily uploads</a></li>
   <li class="nav-item"><a class="nav-link {{ 'active' if ep.startswith('catalogue') }}" href="{{ url_for('catalogue.manage') }}">Catalogue</a></li>
   <li class="nav-item"><a class="nav-link {{ 'active' if ep.endswith('upload') or 'upload_' in ep }}" href="{{ url_for('admin.upload') }}">Upload pricelist</a></li>
   <li class="nav-item"><a class="nav-link {{ 'active' if 'import_reports' in ep }}" href="{{ url_for('admin.import_reports') }}">Import reports</a></li>

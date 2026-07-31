@@ -61,7 +61,7 @@ def revenue_maps():
     recent = {}
     lifetime = {}
     for i in db.session.scalars(db.select(Invoice).where(
-            Invoice.customer_id.isnot(None), Invoice.currency == "UGX",
+            Invoice.customer_id.isnot(None),
             Invoice.payment_status != "Reversed", Invoice.invoice_date.isnot(None))):
         cid = i.customer_id
         v = float(i.untaxed or 0)

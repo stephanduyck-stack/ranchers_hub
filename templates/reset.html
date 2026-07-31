@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block heading %}Password reset{% endblock %}
+
+{% macro reset_card() %}
+<div class="rf-login-wrap">
+  <div class="rf-login-card">
+    <div class="rf-login-banner" {% if login_image %}style="background-image:linear-gradient(rgba(14,14,14,.35),rgba(14,14,14,.45)), url('{{ url_for('auth.login_image') }}'); background-size:cover; background-position:center;"{% endif %}>
+      <img src="{{ url_for('static', filename='img/ranchers-logo.svg') }}" alt="{{ company_name }}">
+    </div>
+    <div class="rf-login-body">
+      <h1 class="h5 text-center mb-1 rf-head">Choose a new password</h1>
+      <p class="text-center text-muted small mb-3">For account <code>{{ user.username }}</code></p>
+      <form method="post" action="{{ url_for('auth.reset_password', token=token) }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+          <label class="form-label">New password (min 8)</label>
+          <input class="form-control" type="password" name="new_password" autofocus required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Confirm password</label>
+          <input class="form-control" type="password" name="confirm_password" required>
+        </div>
+        <button class="btn btn-primary w-100">Set password</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+{% block fullpage %}{{ reset_card() }}{% endblock %}
+{% block content %}{{ reset_card() }}{% endblock %}

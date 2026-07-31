@@ -63,9 +63,23 @@ html, body { height: 100%; }
 
 /* Customer portal branded background (same gradient as the login) */
 .portal-page { background: linear-gradient(160deg, #0E0E0E 0%, #2B2B2B 40%, #F47A21 100%); background-attachment: fixed; min-height: 100vh; }
-.portal-page .rf-content > h1 { color: #fff; }
+/* Page headings sit on the dark gradient — white, wherever they are nested
+   (flex wrappers included). Headings inside white cards keep their own color. */
+.portal-page .rf-content h1 { color: #fff; }
+.portal-page .rf-content .rf-card h1 { color: var(--rf-ink); }
 .portal-page .rf-content > p { color: #ffe7d2; }
 .portal-page .rf-content > p a { color: #fff; text-decoration: underline; }
+
+/* First-visit tour */
+.rf-tour-backdrop { position: fixed; inset: 0; background: rgba(14,14,14,.62); z-index: 2000; }
+.rf-tour-spot { position: absolute; border: 3px solid var(--rf-orange); border-radius: 10px;
+  box-shadow: 0 0 0 6px rgba(244,122,33,.35), 0 0 0 9999px rgba(14,14,14,.62); z-index: 2001;
+  pointer-events: none; transition: all .25s ease; }
+.rf-tour-card { position: absolute; z-index: 2002; width: 320px; max-width: calc(100vw - 24px);
+  background: #fff; border-radius: 12px; box-shadow: 0 14px 44px rgba(0,0,0,.5); padding: 16px 18px; }
+.rf-tour-card h6 { color: var(--rf-ink); font-weight: 700; margin-bottom: 6px; }
+.rf-tour-card p { font-size: .88rem; color: var(--rf-charcoal); margin-bottom: 12px; }
+.rf-tour-step { font-size: .75rem; color: #8a7e72; }
 
 .toast-container { z-index: 1090; }
 .money { font-variant-numeric: tabular-nums; }

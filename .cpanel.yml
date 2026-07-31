@@ -1,22 +1,24 @@
-# cPanel Git Version Control deployment tasks.
+# cPanel Git Version Control deployment tasks — La Patisserie Hub.
 # Runs when you click "Deploy HEAD Commit" in cPanel > Git Version Control.
-# It copies code into the Passenger app directory (keeping instance/ and tmp/),
-# installs requirements, fixes permissions, and gracefully restarts the app.
 #
-# EDIT the two paths below to match your account, then commit this file.
-#   CPUSER   = your cPanel username
-#   APPDIR   = the Passenger application directory (from Setup Python App)
-#   VENVBIN  = the virtualenv bin path shown in Setup Python App
-#              (the "source /home/.../bin/activate" line points to it)
+# This account clones the repo DIRECTLY into the Passenger application
+# directory (repo path == app dir), so there is no copy step: deploy just
+# installs requirements, fixes permissions and gracefully restarts Passenger.
+#
+# Account values (set 27 Jul 2026, from IT):
+#   APPDIR  = /home/aphagr5/lapatisseriehub.aphagroafrica.com
+#   VENVBIN = /home/aphagr5/virtualenv/lapatisseriehub.aphagroafrica.com/3.13/bin
+#
+# Secrets (SECRET_KEY, DATABASE_URL) are NOT set here and NOT in the repo:
+# set them as Environment variables in cPanel > Setup Python App.
 ---
 deployment:
   tasks:
-    - export APPDIR=/home/CPUSER/ranchers_app
-    - export VENVBIN=/home/CPUSER/virtualenv/ranchers_app/3.11/bin
-    - /usr/bin/rsync -a --delete --exclude='.git' --exclude='instance' --exclude='tmp' --exclude='__pycache__' --exclude='*.pyc' ./ $APPDIR/
+    - export APPDIR=/home/aphagr5/lapatisseriehub.aphagroafrica.com
+    - export VENVBIN=/home/aphagr5/virtualenv/lapatisseriehub.aphagroafrica.com/3.13/bin
     - $VENVBIN/pip install --upgrade -r $APPDIR/requirements.txt
-    - /bin/find $APPDIR -type d -not -path '*/instance/*' -exec chmod 755 {} \;
-    - /bin/find $APPDIR -type f -not -path '*/instance/*' -exec chmod 644 {} \;
+    - /bin/find $APPDIR -type d -not -path '*/instance/*' -not -path '*/.git/*' -exec chmod 755 {} \;
+    - /bin/find $APPDIR -type f -not -path '*/instance/*' -not -path '*/.git/*' -exec chmod 644 {} \;
     - /bin/chmod 755 $APPDIR/passenger_wsgi.py
     - /bin/mkdir -p $APPDIR/tmp
     - /bin/touch $APPDIR/tmp/restart.txt

@@ -9,20 +9,75 @@
     {% if current_user.can_manage_all %}<a class="btn btn-primary btn-sm" href="{{ url_for('customers.distributor_new') }}"><i class="bi bi-plus-lg"></i> New distributor</a>{% endif %}
   </div>
 </div>
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+  <div class="input-group" style="max-width:320px">
+    <span class="input-group-text"><i class="bi bi-search"></i></span>
+    <input type="text" id="distSearch" class="form-control" placeholder="Search by name, area, contact or phone…" autofocus autocomplete="off">
+  </div>
+  <form method="get" class="m-0 d-flex flex-wrap gap-2">
+    {% if show_archived %}<input type="hidden" name="archived" value="1">{% endif %}
+    <div class="input-group input-group-sm" style="width:auto">
+      <span class="input-group-text">Rep</span>
+      <select class="form-select" name="rep" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for r in rep_users %}<option value="{{ r.id }}" {{ 'selected' if r.id==rep_id }}>{{ r.full_name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="input-group input-group-sm" style="width:auto">
+      <span class="input-group-text">Distributor since</span>
+      <select class="form-select" name="since" onchange="this.form.submit()">
+        <option value="">Any time</option>
+        <option value="mtd" {{ 'selected' if since=='mtd' }}>This month</option>
+        <option value="30" {{ 'selected' if since=='30' }}>Last 30 days</option>
+        <option value="90" {{ 'selected' if since=='90' }}>Last 90 days</option>
+        <option value="365" {{ 'selected' if since=='365' }}>Last 12 months</option>
+      </select>
+    </div>
+    {% if rep_id or since %}
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('customers.distributors') }}"><i class="bi bi-x-lg"></i> Clear</a>
+    {% endif %}
+  </form>
+  <span class="text-muted small ms-auto" id="distCount">{{ distributors|length }} distributor{{ '' if distributors|length == 1 else 's' }}</span>
+</div>
 <div class="table-responsive rf-card">
 <table class="table table-hover align-middle mb-0">
-  <thead><tr><th>Name</th><th>Operating area</th><th>Responsible rep(s)</th><th>Contact</th><th>Currency</th></tr></thead>
-  <tbody>
+  <thead><tr><th>Name</th><th>Operating area</th><th>Responsible rep(s)</th><th>Contact</th><th>Currency</th><th>Distributor since</th></tr></thead>
+  <tbody id="distRows">
   {% for c in distributors %}
-    <tr>
+    <tr data-search="{{ (c.name ~ ' ' ~ (c.area or '') ~ ' ' ~ (c.contact_name or '') ~ ' ' ~ (c.phone or ''))|lower }}">
       <td><a href="{{ url_for('customers.detail', customer_id=c.id) }}" class="fw-semibold">{{ c.name }}</a></td>
       <td class="small">{{ c.area or '—' }}</td>
       <td class="small">{{ c.reps|map(attribute='full_name')|join(', ') or '—' }}</td>
       <td class="small">{{ c.contact_name or '' }}{% if c.phone %} · {{ c.phone }}{% endif %}</td>
       <td>{{ c.default_currency }}</td>
+      <td class="small">{{ c.created_at.strftime('%d %b %Y') if c.created_at else '—' }}</td>
     </tr>
-  {% else %}<tr><td colspan="5" class="text-center text-muted py-4">No distributors yet. Click “New distributor”.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="6" class="text-center text-muted py-4">No distributors match. Adjust the filters, or click “New distributor”.</td></tr>{% endfor %}
+  <tr id="distNoMatch" class="d-none"><td colspan="6" class="text-center text-muted py-4">No distributors match your search.</td></tr>
   </tbody>
 </table>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  var box = document.getElementById('distSearch');
+  var rows = Array.prototype.slice.call(document.querySelectorAll('#distRows tr[data-search]'));
+  var count = document.getElementById('distCount');
+  var noMatch = document.getElementById('distNoMatch');
+  var total = rows.length;
+  function apply(){
+    var q = box.value.trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function(r){
+      var ok = !q || r.getAttribute('data-search').indexOf(q) !== -1;
+      r.classList.toggle('d-none', !ok);
+      if(ok) shown++;
+    });
+    noMatch.classList.toggle('d-none', shown !== 0);
+    count.textContent = (q ? shown + ' of ' + total : total) + ' distributor' + (total === 1 ? '' : 's');
+  }
+  box.addEventListener('input', apply);
+})();
+</script>
 {% endblock %}

@@ -56,6 +56,12 @@ def create_app(config_object=Config):
     register_portal_guard(app)
     register_errorhandlers(app)
 
+    # Message notification sweep: emails customers whose portal messages sit
+    # unread past the delay (services/notify.py). Piggybacks on traffic, at
+    # most once a minute; notify_sweep.py covers quiet hours via cron.
+    from services import notify
+    notify.register_sweep(app)
+
     @app.after_request
     def set_security_headers(resp):
         # Stop browsers guessing content types on served files, in particular
@@ -137,49 +143,70 @@ EXPECTED_ACC_TRIGGERS = frozenset({
 
 
 def _install_acc_triggers():
-    """Apply migrations/acc_*.sql at every boot (idempotent), then verify.
-
-    SQLite only: the trigger files use SQLite RAISE(ABORT) syntax. On any
-    other backend (e.g. the advertised PostgreSQL switch) the integrity layer
-    does not exist yet, so accounting is refused rather than served without
-    its append-only guarantee. ACC_DB_INTEGRITY gates the accounting
-    blueprint's before_request.
+    """Apply the accounting integrity triggers at every boot (idempotent),
+    then verify. Two dialects carry the layer: SQLite (migrations/acc_0*.sql,
+    the original semantics) and PostgreSQL (migrations/pg/acc_pg_triggers.sql,
+    the PL/pgSQL port of 12 July 2026). Any other backend has no integrity
+    layer, so accounting is refused rather than served without its
+    append-only guarantee. ACC_DB_INTEGRITY gates the accounting blueprint's
+    before_request.
     """
     from flask import current_app
     import glob as _glob
+    from sqlalchemy import text
 
-    if db.engine.dialect.name != "sqlite":
+    dialect = db.engine.dialect.name
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
+
+    if dialect == "sqlite":
+        files = sorted(_glob.glob(os.path.join(base, "acc_0*.sql")))
+        if not files:
+            raise RuntimeError(
+                "migrations/acc_0*.sql not found; cannot install the accounting "
+                "integrity triggers. Refusing to start without them.")
+        # executescript handles the BEGIN..END trigger bodies that a naive
+        # split-on-semicolon would mangle. The files are idempotent
+        # (IF NOT EXISTS / DROP-then-CREATE), so this is safe on every boot.
+        raw = db.engine.raw_connection()
+        try:
+            cur = raw.cursor()
+            for path in files:
+                with open(path, encoding="utf-8") as fh:
+                    cur.executescript(fh.read())
+            raw.commit()
+        finally:
+            raw.close()
+        have = {r[0] for r in db.session.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"))}
+    elif dialect == "postgresql":
+        path = os.path.join(base, "pg", "acc_pg_triggers.sql")
+        if not os.path.exists(path):
+            raise RuntimeError(
+                "migrations/pg/acc_pg_triggers.sql not found; cannot install "
+                "the accounting integrity triggers. Refusing to start without "
+                "them.")
+        with open(path, encoding="utf-8") as fh:
+            script = fh.read()
+        # Raw cursor with NO parameters: the script contains literal '%'
+        # (RAISE EXCEPTION '%'), which psycopg2 would treat as a placeholder
+        # if any parameter object were passed. Dollar-quoted bodies survive.
+        raw = db.engine.raw_connection()
+        try:
+            cur = raw.cursor()
+            cur.execute(script)
+            raw.commit()
+        finally:
+            raw.close()
+        have = {r[0] for r in db.session.execute(text(
+            "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal"))}
+    else:
         current_app.config["ACC_DB_INTEGRITY"] = False
         current_app.logger.error(
-            "Accounting integrity triggers are SQLite-only and this database "
-            "is %s. Accounting routes are DISABLED until the triggers are "
-            "ported to this backend (see migrations/acc_00*.sql).",
-            db.engine.dialect.name)
+            "Accounting integrity triggers exist for SQLite and PostgreSQL "
+            "only, and this database is %s. Accounting routes are DISABLED "
+            "until the triggers are ported to this backend.", dialect)
         return
 
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
-    files = sorted(_glob.glob(os.path.join(base, "acc_0*.sql")))
-    if not files:
-        raise RuntimeError(
-            "migrations/acc_0*.sql not found; cannot install the accounting "
-            "integrity triggers. Refusing to start without them.")
-
-    # executescript handles the BEGIN..END trigger bodies that a naive
-    # split-on-semicolon would mangle. The files are idempotent
-    # (IF NOT EXISTS / DROP-then-CREATE), so this is safe on every boot.
-    raw = db.engine.raw_connection()
-    try:
-        cur = raw.cursor()
-        for path in files:
-            with open(path, encoding="utf-8") as fh:
-                cur.executescript(fh.read())
-        raw.commit()
-    finally:
-        raw.close()
-
-    from sqlalchemy import text
-    have = {r[0] for r in db.session.execute(text(
-        "SELECT name FROM sqlite_master WHERE type='trigger'"))}
     missing = EXPECTED_ACC_TRIGGERS - have
     if missing:
         raise RuntimeError(
@@ -189,6 +216,33 @@ def _install_acc_triggers():
     current_app.config["ACC_DB_INTEGRITY"] = True
 
 
+class _DialectConn:
+    """Adapter for the migration ladder below: the ALTER statements are
+    written in SQLite flavour; on PostgreSQL this rewrites the three
+    incompatibilities ("user" is reserved and needs quoting, booleans take
+    FALSE not 0, and the DATETIME type is spelled TIMESTAMP)."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self._pg = db.engine.dialect.name == "postgresql"
+
+    def execute(self, clause):
+        from sqlalchemy import text as _text
+        if self._pg:
+            import re as _re
+            s = str(clause)
+            s = s.replace("ALTER TABLE user ", 'ALTER TABLE "user" ')
+            s = s.replace("BOOLEAN NOT NULL DEFAULT 0",
+                          "BOOLEAN NOT NULL DEFAULT FALSE")
+            s = s.replace("BOOLEAN DEFAULT 0", "BOOLEAN DEFAULT FALSE")
+            s = s.replace("BOOLEAN NOT NULL DEFAULT 1",
+                          "BOOLEAN NOT NULL DEFAULT TRUE")
+            s = s.replace("BOOLEAN DEFAULT 1", "BOOLEAN DEFAULT TRUE")
+            s = _re.sub(r"\bDATETIME\b", "TIMESTAMP", s)
+            clause = _text(s)
+        return self._conn.execute(clause)
+
+
 def _run_migrations():
     """Add columns introduced after a DB was first created (in-place upgrade)."""
     from sqlalchemy import inspect, text
@@ -196,7 +250,8 @@ def _run_migrations():
     if "pricelist" not in insp.get_table_names():
         return  # fresh DB; create_all (in caller) builds the current schema
     cols = {c["name"] for c in insp.get_columns("pricelist")}
-    with db.engine.begin() as conn:
+    with db.engine.begin() as _raw_conn:
+            conn = _DialectConn(_raw_conn)
             if "archived" not in cols:
                 conn.execute(text(
                     "ALTER TABLE pricelist ADD COLUMN archived BOOLEAN DEFAULT 0"))
@@ -269,6 +324,46 @@ def _run_migrations():
                     ("delivery_notes", "VARCHAR(255)")):
                     if _col not in ccols:
                         conn.execute(text(f"ALTER TABLE customer ADD COLUMN {_col} {_type}"))
+                # Finance credit clearance (20 Jul 2026). On first migration,
+                # accounts currently 'ok' start cleared so orders keep
+                # flowing; on-hold/blocked accounts start uncleared.
+                if "credit_cleared" not in ccols:
+                    conn.execute(text("ALTER TABLE customer ADD COLUMN credit_cleared BOOLEAN DEFAULT 0"))
+                    conn.execute(text("ALTER TABLE customer ADD COLUMN credit_cleared_by_id INTEGER"))
+                    conn.execute(text("ALTER TABLE customer ADD COLUMN credit_cleared_at DATETIME"))
+                    conn.execute(text("UPDATE customer SET credit_cleared=1 WHERE account_status='ok'"))
+                # Back-order preference (21 Jul 2026): existing customers keep
+                # today's behaviour (back orders raised) until edited.
+                if "backorders_allowed" not in ccols:
+                    conn.execute(text("ALTER TABLE customer ADD COLUMN backorders_allowed BOOLEAN DEFAULT 1"))
+                    conn.execute(text("UPDATE customer SET backorders_allowed=1"))
+                # Credit limit engine (21 Jul 2026): no limit set anywhere at
+                # first — finance arms customers one by one.
+                if "credit_limit_ugx" not in ccols:
+                    conn.execute(text("ALTER TABLE customer ADD COLUMN credit_limit_ugx INTEGER"))
+                if "credit_days" not in ccols:
+                    conn.execute(text("ALTER TABLE customer ADD COLUMN credit_days INTEGER"))
+                if "odoo_receivable" not in ccols:
+                    conn.execute(text("ALTER TABLE customer ADD COLUMN odoo_receivable NUMERIC(18,2)"))
+                    conn.execute(text("ALTER TABLE customer ADD COLUMN odoo_receivable_at DATE"))
+            if "sales_order" in insp.get_table_names():
+                socols2 = {c["name"] for c in insp.get_columns("sales_order")}
+                if "credit_override_by_id" not in socols2:
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN credit_override_by_id INTEGER"))
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN credit_override_at DATETIME"))
+                if "momo_ref" not in socols2:
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN momo_ref VARCHAR(40)"))
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN momo_ref_at DATETIME"))
+            if "sales_order_line" in insp.get_table_names():
+                solcols = {c["name"] for c in insp.get_columns("sales_order_line")}
+                if "tax_category" not in solcols:
+                    conn.execute(text("ALTER TABLE sales_order_line ADD COLUMN tax_category VARCHAR(8)"))
+            if "pricelist" in insp.get_table_names():
+                pcols2 = {c["name"] for c in insp.get_columns("pricelist")}
+                if "allow_small_orders" not in pcols2:
+                    conn.execute(text("ALTER TABLE pricelist ADD COLUMN allow_small_orders BOOLEAN DEFAULT 0"))
+                    conn.execute(text("UPDATE pricelist SET allow_small_orders=1 "
+                                      "WHERE name LIKE '%Meat Supermarkets%' OR name LIKE '%Sokoni%'"))
             if "line_price" in insp.get_table_names():
                 lpcols = {c["name"] for c in insp.get_columns("line_price")}
                 if "pending_amount" not in lpcols:
@@ -287,6 +382,13 @@ def _run_migrations():
                     conn.execute(text("ALTER TABLE user ADD COLUMN customer_id INTEGER"))
                 if "manager_id" not in ucols:
                     conn.execute(text("ALTER TABLE user ADD COLUMN manager_id INTEGER"))
+                if "must_change_password" not in ucols:
+                    conn.execute(text("ALTER TABLE user ADD COLUMN "
+                                      "must_change_password BOOLEAN NOT NULL DEFAULT 0"))
+            if "message" in insp.get_table_names():
+                mcols = {c["name"] for c in insp.get_columns("message")}
+                if "emailed_at" not in mcols:
+                    conn.execute(text("ALTER TABLE message ADD COLUMN emailed_at DATETIME"))
             if "sales_order" in insp.get_table_names():
                 ocols2 = {c["name"] for c in insp.get_columns("sales_order")}
                 if "lpo_filename" not in ocols2:
@@ -383,7 +485,60 @@ def _run_migrations():
                                       "ON prod_production (lot_number)"))
                 if "expiry" not in ppc:
                     conn.execute(text("ALTER TABLE prod_production ADD COLUMN expiry DATE"))
+            # Invoice-after-delivery flow (31 Jul 2026): accepted quantities,
+            # delivery variance and the physical delivery-note filing trail.
+            if "sales_order_line" in insp.get_table_names():
+                sol = {c["name"] for c in insp.get_columns("sales_order_line")}
+                if "accepted_qty" not in sol:
+                    conn.execute(text("ALTER TABLE sales_order_line ADD COLUMN accepted_qty FLOAT"))
+                if "variance_reason" not in sol:
+                    conn.execute(text("ALTER TABLE sales_order_line ADD COLUMN variance_reason VARCHAR(24)"))
+            if "sales_order" in insp.get_table_names():
+                so31 = {c["name"] for c in insp.get_columns("sales_order")}
+                if "accepted_recorded_at" not in so31:
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN accepted_recorded_at DATETIME"))
+                if "accepted_recorded_by_id" not in so31:
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN accepted_recorded_by_id INTEGER"))
+                if "dnote_filing_no" not in so31:
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN dnote_filing_no VARCHAR(20)"))
+                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_sales_order_dnote_filing_no "
+                                      "ON sales_order (dnote_filing_no)"))
+                if "dnote_filed_at" not in so31:
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN dnote_filed_at DATETIME"))
+                if "dnote_filed_by_id" not in so31:
+                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN dnote_filed_by_id INTEGER"))
     _cleanup_orphan_user_refs()
+    _cleanup_datekey_payments()
+
+
+def _cleanup_datekey_payments():
+    """One-time repair (29 Jul 2026): daily payment files exported without
+    the payment Number column keyed each row on a date column, collapsing
+    every payment of a day into one record. Those records carry a datetime
+    string as their number (e.g. '2026-07-27 00:00:00'); most duplicate
+    properly numbered payments loaded from the full-history export, the
+    rest are restored by re-importing a correct export. Delete them.
+    sales_import.import_payments now rejects files without the Number
+    column, so no new ones appear. Check-then-write like the orphan
+    cleanup above: once clean, no boot takes the write lock again."""
+    from sqlalchemy import text
+    try:
+        pending = db.session.execute(text(
+            "SELECT COUNT(*) FROM customer_payment "
+            "WHERE number LIKE '%00:00:00%'")).scalar()
+        if not pending:
+            return
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                "DELETE FROM customer_payment WHERE number LIKE '%00:00:00%'"))
+        from flask import current_app
+        current_app.logger.warning(
+            "Removed %s date-keyed payment records left by payment exports "
+            "missing the Number column", pending)
+    except Exception:
+        from flask import current_app
+        current_app.logger.exception(
+            "Date-keyed payment cleanup skipped (will retry next boot)")
 
 
 def _cleanup_orphan_user_refs():
@@ -444,6 +599,7 @@ def register_blueprints(app):
     from blueprints.price_promos import bp as price_promos_bp
     from blueprints.production import bp as production_bp
     from blueprints.accounting import bp as accounting_bp
+    from blueprints.invoicing import bp as invoicing_bp
     from blueprints.api import bp as api_bp
     # Costing module (ported from the standalone meat-costing-app).
     from blueprints.summary import summary_bp
@@ -482,6 +638,7 @@ def register_blueprints(app):
     app.register_blueprint(price_promos_bp)
     app.register_blueprint(production_bp)
     app.register_blueprint(accounting_bp)
+    app.register_blueprint(invoicing_bp)
     for costing_bp in (summary_bp, ingredients_bp, cuts_bp, spice_bp,
                        recipes_bp, pricing_bp, overhead_bp, packaging_bp,
                        whatif_bp, settings_bp):
@@ -512,7 +669,10 @@ def register_template_helpers(app):
             "portal_unread": 0,
             "staff_unread": 0,
             "pending_onboarding": 0,
+            "credit_alerts_open": 0,
             "driver_new": 0,
+            "inv_queue_open": 0,
+            "dn_filing_open": 0,
             "portal_outlets": [],
             "portal_active_id": None,
         }
@@ -560,6 +720,20 @@ def register_template_helpers(app):
                         db.select(db.func.count(Customer.id)).where(
                             Customer.onboarding_status == "pending",
                             Customer.archived.is_(False))) or 0
+                if getattr(current_user, "can_clear_credit", False):
+                    from models import CreditAlert as _CA
+                    ctx["credit_alerts_open"] = db.session.scalar(
+                        db.select(db.func.count(_CA.id)).where(
+                            _CA.status == "open")) or 0
+                # Invoice-after-delivery badges (31 Jul 2026): the clerk's two
+                # queues — signed notes to invoice, paper to file.
+                if (current_user.is_finance or current_user.role in
+                        ("admin", "ceo", "manager")):
+                    from services.features import feature_on as _fon
+                    if _fon("invoice_after_delivery"):
+                        from blueprints import invoicing as _invq
+                        ctx["inv_queue_open"] = _invq.queue_count()
+                        ctx["dn_filing_open"] = _invq.filing_count()
         except Exception:
             # Badge counts are non-critical; log the failure but still render
             # the page with safe zero defaults set above.

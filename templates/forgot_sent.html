@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block heading %}Password reset{% endblock %}
+
+{% macro sent_card() %}
+<div class="rf-login-wrap">
+  <div class="rf-login-card">
+    <div class="rf-login-banner" {% if login_image %}style="background-image:linear-gradient(rgba(14,14,14,.35),rgba(14,14,14,.45)), url('{{ url_for('auth.login_image') }}'); background-size:cover; background-position:center;"{% endif %}>
+      <img src="{{ url_for('static', filename='img/ranchers-logo.svg') }}" alt="{{ company_name }}">
+    </div>
+    <div class="rf-login-body text-center">
+      <div style="font-size:2.4rem; color:var(--rf-orange)"><i class="bi bi-envelope-check"></i></div>
+      <h1 class="h5 rf-head mb-2">Check your email</h1>
+      <p class="small text-muted mb-2">If that account exists and has an email
+        address on file, we sent a link to choose a new password.</p>
+      <p class="small text-muted mb-3">The link works for <strong>2 hours</strong>.
+        Nothing in the inbox after a few minutes? Check the spam folder.</p>
+      <a class="btn btn-primary w-100 mb-2" href="{{ url_for('auth.login') }}">Back to sign in</a>
+      <p class="small mb-0"><a href="{{ url_for('auth.forgot') }}">Send again</a>
+        · <span class="text-muted">wrong address? contact your sales representative</span></p>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+{% block fullpage %}{{ sent_card() }}{% endblock %}
+{% block content %}{{ sent_card() }}{% endblock %}

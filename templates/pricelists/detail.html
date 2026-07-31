@@ -15,6 +15,15 @@
       <button class="btn btn-sm btn-outline-secondary py-0"><i class="bi bi-toggle-{{ 'on' if pl.vat_applicable else 'off' }}"></i> {{ 'Switch VAT off' if pl.vat_applicable else 'Charge VAT' }}</button>
     </form>
     {% endif %}
+    {% if pl.allow_small_orders %}<span class="badge bg-secondary" title="Orders below box sizes allowed">small orders OK</span>
+    {% else %}<span class="badge" style="background:#6E7149" title="Quantities must be full-box multiples">box quantities only</span>{% endif %}
+    {% if current_user.is_pricing_officer or current_user.is_admin %}
+    <form method="post" action="{{ url_for('pricelists.set_small_orders', list_id=pl.id) }}" class="d-inline">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="allow_small_orders" value="{{ '0' if pl.allow_small_orders else '1' }}">
+      <button class="btn btn-sm btn-outline-secondary py-0"><i class="bi bi-box"></i> {{ 'Require box quantities' if pl.allow_small_orders else 'Allow small orders' }}</button>
+    </form>
+    {% endif %}
     {% set st = pl.status_for() %}
     {% if st=='expired' %}<span class="badge badge-danger">Expired {{ pl.valid_until }}</span>
     {% elif st=='expiring' %}<span class="badge badge-warn">Expiring {{ pl.valid_until }}</span>

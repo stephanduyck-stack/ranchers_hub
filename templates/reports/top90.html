@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block heading %}Top performers — last 90 days{% endblock %}
+{% block content %}
+{% include "reports/_nav.html" %}
+<p class="text-muted">{{ win90.strftime('%d %b %Y') }} – {{ today.strftime('%d %b %Y') }} ·
+net UGX · invoiced sales plus app orders newer than the latest invoice.
+The dashboard shows the same lists for the last 3 days.</p>
+
+<div class="rf-card p-3 mb-4">
+  <h2 class="h6"><i class="bi bi-bar-chart text-rf-orange"></i> Monthly revenue — evolution</h2>
+  <canvas id="monthChart" height="90"></canvas>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="rf-card p-3">
+      <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Top products — last 3 months compared</h2>
+      <canvas id="prodChart" height="130"></canvas>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-star text-rf-orange"></i> Top customers — last 3 months compared</h2>
+      <canvas id="custChart" height="220"></canvas>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-people-fill text-rf-orange"></i> Reps — last 3 months compared</h2>
+      <canvas id="repChart" height="220"></canvas>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Top products</h2>
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th></th><th>Product</th><th class="text-end">Qty</th><th class="text-end">Value (UGX)</th></tr></thead>
+        <tbody>
+        {% for name, val, qty in top_products %}
+          <tr><td class="small text-muted">{{ loop.index }}</td><td class="small">{{ name }}</td>
+            <td class="text-end small">{{ '{:,.0f}'.format(qty) }}</td>
+            <td class="text-end money">{{ '{:,.0f}'.format(val) }}</td></tr>
+        {% else %}<tr><td colspan="4" class="text-center text-muted py-3">No data.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-star text-rf-orange"></i> Top customers</h2>
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th></th><th>Customer</th><th class="text-end">Value (UGX)</th></tr></thead>
+        <tbody>
+        {% for name, val in top_customers %}
+          <tr><td class="small text-muted">{{ loop.index }}</td><td class="small">{{ name }}</td>
+            <td class="text-end money">{{ '{:,.0f}'.format(val) }}</td></tr>
+        {% else %}<tr><td colspan="3" class="text-center text-muted py-3">No data.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-people-fill text-rf-orange"></i> Rep leaderboard</h2>
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th></th><th>Rep</th><th class="text-end">Value (UGX)</th></tr></thead>
+        <tbody>
+        {% for name, val in rep_leaders %}
+          <tr><td class="small text-muted">{{ loop.index }}</td><td class="small">{{ name }}</td>
+            <td class="text-end money">{{ '{:,.0f}'.format(val) }}</td></tr>
+        {% else %}<tr><td colspan="3" class="text-center text-muted py-3">No data.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6"><i class="bi bi-truck text-rf-orange"></i> Top distributors
+        <span class="float-end small fw-normal">
+          <span class="badge" style="background:#4E7CA1">Export {{ '{:,.0f}'.format(dist_exp or 0) }}</span>
+          <span class="badge" style="background:#6E7149">Local {{ '{:,.0f}'.format(dist_loc or 0) }}</span>
+        </span></h2>
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th></th><th>Distributor</th><th></th><th class="text-end">Value (UGX)</th></tr></thead>
+        <tbody>
+        {% for name, val, band in top_distributors %}
+          <tr><td class="small text-muted">{{ loop.index }}</td><td class="small">{{ name }}</td>
+            <td><span class="badge" style="background:{{ '#4E7CA1' if band == 'Export' else '#6E7149' }}">{{ band }}</span></td>
+            <td class="text-end money">{{ '{:,.0f}'.format(val) }}</td></tr>
+        {% else %}<tr><td colspan="4" class="text-center text-muted py-3">No data.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+new Chart(document.getElementById('monthChart').getContext('2d'), {
+  type: 'bar',
+  data: {
+    labels: {{ month_labels|tojson }},
+    datasets: [{
+      label: 'Net revenue (UGX)',
+      data: {{ month_values|tojson }},
+      backgroundColor: '#F47A21',
+      borderRadius: 4,
+    }]
+  },
+  options: {
+    plugins: { legend: { display: false } },
+    scales: { y: { ticks: { callback: v => (v/1e6).toFixed(0) + 'M' } } }
+  }
+});
+
+// Grouped 3-month comparison charts (horizontal bars, one group per entity)
+const M3 = {{ m3_labels|tojson }};
+const M3_COLORS = ['#D9CDBF', '#8A8175', '#F47A21'];   // oldest -> current
+function grouped(id, cfg){
+  new Chart(document.getElementById(id).getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: cfg.labels,
+      datasets: M3.map((m, i) => ({
+        label: m, data: cfg.series[i],
+        backgroundColor: M3_COLORS[i], borderRadius: 3,
+      }))
+    },
+    options: {
+      indexAxis: 'y',
+      plugins: { legend: { position: 'top' } },
+      scales: { x: { ticks: { callback: v => (v/1e6).toFixed(0) + 'M' } } }
+    }
+  });
+}
+grouped('prodChart', {{ chart_products|tojson }});
+grouped('custChart', {{ chart_customers|tojson }});
+grouped('repChart', {{ chart_reps|tojson }});
+</script>
+{% endblock %}

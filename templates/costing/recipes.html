@@ -20,11 +20,15 @@
       <label class="form-check-label small" for="showAll">Show all (incl. inactive)</label>
     </div>
   </form>
-  <table class="table table-hover align-middle">
+  <div class="input-group input-group-sm mb-2" style="max-width:420px">
+    <span class="input-group-text"><i class="bi bi-search"></i></span>
+    <input class="form-control" id="recipeSearch" placeholder="Search recipe or category…" autocomplete="off">
+  </div>
+  <table class="table table-hover align-middle" id="recipeTable">
     <thead><tr><th>Product</th><th>Category</th><th>Status</th><th class="num">Cost/kg</th><th></th></tr></thead>
     <tbody>
       {% for r, cost in rows %}
-      <tr class="{{ 'row-inactive' if r.status=='inactive' }}">
+      <tr class="{{ 'row-inactive' if r.status=='inactive' }}" data-search="{{ (r.name ~ ' ' ~ (r.category.name if r.category else ''))|lower }}">
         <td class="fw-semibold"><a href="{{ url_for('recipes.view', rid=r.id) }}" class="text-decoration-none">{{ r.name }}</a></td>
         <td class="small text-muted">{{ r.category.name if r.category else '—' }}</td>
         <td>{% if r.status=='inactive' %}<span class="badge bg-secondary">Inactive</span>{% else %}<span class="badge bg-success">Active</span>{% endif %}</td>
@@ -50,6 +54,22 @@
       {% endfor %}
     </tbody>
   </table>
-  <div class="text-muted small">{{ rows|length }} recipe(s)</div>
+  <div class="text-muted small"><span id="recipeCount">{{ rows|length }}</span> recipe(s)</div>
 </div></div>
+<script>
+(function(){
+  var box = document.getElementById('recipeSearch'); if (!box) return;
+  var rows = Array.prototype.slice.call(document.querySelectorAll('#recipeTable tbody tr[data-search]'));
+  var count = document.getElementById('recipeCount');
+  box.addEventListener('input', function(){
+    var q = box.value.trim().toLowerCase(), shown = 0;
+    rows.forEach(function(tr){
+      var ok = !q || tr.getAttribute('data-search').indexOf(q) !== -1;
+      tr.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    if (count) count.textContent = shown;
+  });
+})();
+</script>
 {% endblock %}

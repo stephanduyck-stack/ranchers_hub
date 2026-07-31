@@ -13,7 +13,7 @@
       {% if totals[s] %}<div class="small text-rf-orange">{{ totals[s]|round(0)|int }}</div>{% endif %}
     </div>
     {% for d in by_stage[s] %}
-    <a class="rf-card p-2 mb-2 d-block text-decoration-none" href="{{ url_for('customers.detail', customer_id=d.customer_id) }}#deals">
+    <a class="rf-card p-2 mb-2 d-block text-decoration-none" href="{{ url_for('customers.info', customer_id=d.customer_id) }}#deals">
       <div class="fw-semibold small text-dark">{{ d.title }}</div>
       <div class="small text-muted">{{ d.customer.name }}</div>
       {% if d.value %}<div class="small money">{{ d.value|money(d.currency) }}</div>{% endif %}

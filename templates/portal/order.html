@@ -33,17 +33,24 @@
 <form method="post" action="{{ url_for('portal.save', order_id=order.id) }}" enctype="multipart/form-data" id="orderForm">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <p class="text-muted">Enter the quantity you want next to each product, then submit. Leave blank for items you don't need.</p>
-  <div class="input-group mb-2" style="max-width:420px">
-    <span class="input-group-text"><i class="bi bi-search"></i></span>
-    <input class="form-control" id="ordSearch" placeholder="Search product or article no…"
-           onkeyup="filterTable('ordSearch','orderTable')" autocomplete="off">
+  <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+    <div class="input-group" style="max-width:420px">
+      <span class="input-group-text"><i class="bi bi-search"></i></span>
+      <input class="form-control" id="ordSearch" placeholder="Search product or article no…"
+             onkeyup="filterTable('ordSearch','orderTable')" autocomplete="off">
+    </div>
+    <a class="btn btn-primary" href="#placeBox"><i class="bi bi-arrow-down-circle"></i> Go to place order</a>
   </div>
   <div class="table-responsive rf-card mb-3">
     <table class="table table-sm align-middle mb-0" id="orderTable">
       <thead><tr><th>Art</th><th>Description</th><th>Pack</th><th class="text-end">Price</th><th class="text-end" style="width:110px">Quantity</th><th class="text-end">Line total</th></tr></thead>
       <tbody>
-      {% set ns = namespace(section=None) %}
+      {% set ns = namespace(section=None, plist=None) %}
       {% for r in rows %}
+        {% if r.list_name and r.list_name != ns.plist %}
+          {% set ns.plist = r.list_name %}
+          <tr class="section-row"><td colspan="6" class="fw-semibold" style="background:#F47A21; color:#fff">{{ r.list_name }}</td></tr>
+        {% endif %}
         {% if r.line.section and r.line.section != ns.section %}
           {% set ns.section = r.line.section %}
           <tr class="section-row"><td colspan="6">{{ r.line.section }}</td></tr>
@@ -51,10 +58,11 @@
         <tr data-search="{{ (r.product.article_no ~ ' ' ~ r.product.description)|lower }}">
           <td class="fw-semibold">{{ r.product.article_no }}</td>
           <td>{{ r.product.description }}</td>
-          <td class="small">{{ r.line.pack_size or r.product.pack_size or '' }}</td>
+          <td class="small">{{ r.line.pack_size or r.product.pack_size or '' }}{% if r.box %}<span class="d-block text-muted">min. box {{ '%g'|format(r.box) }}</span>{% endif %}</td>
           <td class="text-end money">{{ r.price|money(order.currency) }}</td>
           <td class="text-end">
-            <input type="number" step="any" min="0" name="qty_{{ r.line.id }}" value="{{ r.qty }}"
+            <input type="number" name="qty_{{ r.line.id }}" value="{{ r.qty }}"
+                   {% if r.box %}min="{{ r.box }}" step="{{ r.box }}" title="Order in boxes of {{ '%g'|format(r.box) }}"{% else %}step="any" min="0"{% endif %}
                    class="form-control form-control-sm text-end qty" data-price="{{ r.price }}"
                    data-vat="{{ 1 if (order.vat_applicable and r.product.vat_applicable) else 0 }}"
                    style="width:95px; display:inline-block">
@@ -73,7 +81,7 @@
     <div class="small text-muted mt-1">Totals update when you save or submit.</div>
   </div>
 
-  <div class="rf-card p-3 mb-3" style="max-width:640px">
+  <div class="rf-card p-3 mb-3" style="max-width:640px" id="placeBox">
     <h2 class="h6">Delivery &amp; submission</h2>
     <div class="row">
       <div class="col-md-6 mb-2"><label class="form-label small">Requested delivery date</label>

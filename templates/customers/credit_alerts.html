@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block heading %}Credit alerts{% endblock %}
+{% block content %}
+<p class="text-muted">Orders waiting for fulfilment on accounts without finance clearance or blocked.
+Unblock releases the account for acceptance; keep blocked informs the customer (portal message + email) and the rep (email) the order is on hold.</p>
+
+<div class="rf-card p-0 mb-4">
+  <div class="table-responsive"><table class="table table-hover align-middle mb-0">
+    <thead><tr><th>Raised</th><th>Order</th><th>Customer</th><th>Reason</th><th class="text-end">Outstanding / limit</th><th class="text-end">Order total</th><th>Terms</th><th>Note on account</th><th style="min-width:330px"></th></tr></thead>
+    <tbody>
+    {% for a in open_alerts %}
+      <tr>
+        <td class="small">{{ a.created_at.strftime('%d %b %H:%M') }}</td>
+        <td>{% if a.order %}<a href="{{ url_for('orders.detail', order_id=a.order.id) }}" class="fw-semibold">{{ a.order.number }}</a>{% else %}—{% endif %}</td>
+        <td><a href="{{ url_for('customers.detail', customer_id=a.customer.id) }}">{{ a.customer.name }}</a>
+          <div class="small text-muted">{{ a.customer.reps|map(attribute='full_name')|join(', ') or 'no rep' }}</div></td>
+        <td>{% if a.reason=='blocked' %}<span class="badge badge-danger">blocked</span>{% elif a.reason=='over_limit' %}<span class="badge badge-danger">over limit</span>{% elif a.reason=='overdue' %}<span class="badge badge-danger">overdue</span>{% else %}<span class="badge badge-warn">not cleared</span>{% endif %}</td>
+        <td class="text-end small">{% if a.customer.credit_limit_ugx %}{{ '{:,}'.format(outstanding(a.customer)) }} / {{ '{:,}'.format(a.customer.credit_limit_ugx) }}{% else %}no limit{% endif %}</td>
+        <td class="text-end money">{{ a.order.total|money(a.order.currency) if a.order else '—' }}</td>
+        <td class="small">{{ a.customer.payment_terms or '—' }}</td>
+        <td class="small">{{ a.customer.account_note or '—' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('customers.credit_alert_decide', alert_id=a.id) }}" class="d-flex gap-2 align-items-center flex-wrap">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input class="form-control form-control-sm" name="note" placeholder="Optional note (goes to customer/rep if kept blocked)" style="min-width:160px; flex:1">
+            {% if a.reason in ('over_limit', 'overdue') %}
+            <button class="btn btn-sm btn-success" name="decision" value="release_order"
+                    onclick="return confirm('Release {{ a.order.number if a.order else 'this order' }} past the credit limit? Only this order passes; the limit stays.')"><i class="bi bi-unlock"></i> Release order</button>
+            {% else %}
+            <button class="btn btn-sm btn-success" name="decision" value="unblock"
+                    onclick="return confirm('Unblock {{ a.customer.name }} and clear for fulfilment?')"><i class="bi bi-unlock"></i> Unblock</button>
+            {% endif %}
+            <button class="btn btn-sm btn-outline-danger" name="decision" value="keep_blocked"
+                    onclick="return confirm('Keep {{ a.customer.name }} blocked? The customer and the rep are informed the order is on hold.')"><i class="bi bi-lock"></i> Keep blocked</button>
+          </form>
+        </td>
+      </tr>
+    {% else %}<tr><td colspan="9" class="text-center text-muted py-4">No open credit alerts.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<h2 class="h6">Recent decisions</h2>
+<div class="rf-card p-0">
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Decided</th><th>Order</th><th>Customer</th><th>Decision</th><th>By</th><th>Note</th></tr></thead>
+    <tbody>
+    {% for a in decided %}
+      <tr>
+        <td class="small">{{ a.decided_at.strftime('%d %b %H:%M') if a.decided_at else '—' }}</td>
+        <td class="small">{% if a.order %}<a href="{{ url_for('orders.detail', order_id=a.order.id) }}">{{ a.order.number }}</a>{% else %}—{% endif %}</td>
+        <td class="small">{{ a.customer.name }}</td>
+        <td>{% if a.status=='unblocked' %}<span class="badge badge-ok">unblocked</span>{% else %}<span class="badge badge-danger">kept blocked</span>{% endif %}</td>
+        <td class="small">{{ a.decided_by.full_name if a.decided_by else '—' }}</td>
+        <td class="small">{{ a.note or '—' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="text-center text-muted py-3">No decisions yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

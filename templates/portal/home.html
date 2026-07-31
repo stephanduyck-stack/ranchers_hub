@@ -2,7 +2,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="h4 rf-head mb-0">Welcome, {{ cust.name }}</h1>
-  <a class="btn btn-primary" href="{{ url_for('portal.order_new') }}"><i class="bi bi-plus-lg"></i> Place a new order</a>
+  <a id="btn-new-order" class="btn btn-primary" href="{{ url_for('portal.order_new') }}"><i class="bi bi-plus-lg"></i> Place a new order</a>
 </div>
 
 <div class="row g-3 mb-4">
@@ -92,9 +92,9 @@
   </div>
 </div>
 
-{% if drafts %}
-<div class="alert alert-warning py-2">You have an unfinished order:
-  {% for d in drafts %}<a href="{{ url_for('portal.order', order_id=d.id) }}">{{ d.number }}</a>{% if not loop.last %}, {% endif %}{% endfor %} — finish and submit it.</div>
+{% if resume_draft %}
+<div class="alert alert-warning py-2">You have an unfinished order —
+  <a href="{{ url_for('portal.order', order_id=resume_draft.id) }}">continue where you left off</a>.</div>
 {% endif %}
 
 <div class="row g-3">
@@ -145,4 +145,82 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* First-visit tour: runs once (localStorage), replays via /portal/?tour=1
+   or the link on the Help page. */
+(function(){
+  var FORCE = new URLSearchParams(location.search).get('tour') === '1';
+  var KEY = 'rfPortalTourDone';
+  try { if (!FORCE && localStorage.getItem(KEY)) return; } catch(e) { return; }
+
+  var steps = [
+    {el: null, title: 'Welcome to the Ranchers Customer Portal',
+     text: 'A 30-second tour of what you can do here. You can skip at any time.'},
+    {el: '#pnav-pricelist', title: 'My Pricelist',
+     text: 'Your agreed prices, always current. Prices update automatically when new lists take effect.'},
+    {el: '#pnav-catalogue', title: 'Catalogue',
+     text: 'Browse the full product range.'},
+    {el: '#btn-new-order', title: 'Place an order',
+     text: 'Pick products and quantities, submit, and you receive an order number right away. You can attach your own LPO.'},
+    {el: '#pnav-messages', title: 'Messages',
+     text: 'Questions or changes on an order? Write to us here — we reply in the portal.'},
+    {el: '#pnav-help', title: 'Help & FAQ',
+     text: 'The full guide and frequently asked questions live here. You can replay this tour from that page too.'}
+  ];
+
+  var spot = document.createElement('div'); spot.className = 'rf-tour-spot';
+  var card = document.createElement('div'); card.className = 'rf-tour-card';
+  var idx = 0;
+
+  function finish(){
+    try { localStorage.setItem(KEY, '1'); } catch(e) {}
+    spot.remove(); card.remove();
+  }
+
+  function show(i){
+    idx = i;
+    if (i >= steps.length) return finish();
+    var s = steps[i], target = s.el && document.querySelector(s.el);
+    card.innerHTML =
+      '<div class="rf-tour-step mb-1">Step ' + (i+1) + ' of ' + steps.length + '</div>' +
+      '<h6></h6><p></p>' +
+      '<div class="d-flex justify-content-between align-items-center">' +
+      '<button type="button" class="btn btn-sm btn-link text-muted p-0" data-act="skip">Skip tour</button>' +
+      '<button type="button" class="btn btn-sm btn-primary" data-act="next">' +
+      (i === steps.length - 1 ? 'Done' : 'Next') + '</button></div>';
+    card.querySelector('h6').textContent = s.title;
+    card.querySelector('p').textContent = s.text;
+    card.querySelector('[data-act=skip]').onclick = finish;
+    card.querySelector('[data-act=next]').onclick = function(){ show(idx + 1); };
+    document.body.appendChild(spot); document.body.appendChild(card);
+
+    if (target){
+      var r = target.getBoundingClientRect(), pad = 6;
+      spot.style.borderWidth = '3px';
+      spot.style.left = (r.left + scrollX - pad) + 'px';
+      spot.style.top = (r.top + scrollY - pad) + 'px';
+      spot.style.width = (r.width + 2*pad) + 'px';
+      spot.style.height = (r.height + 2*pad) + 'px';
+      var cw = Math.min(320, innerWidth - 24);
+      var left = Math.min(Math.max(12, r.left + scrollX), scrollX + innerWidth - cw - 12);
+      card.style.left = left + 'px';
+      card.style.top = (r.bottom + scrollY + 14) + 'px';
+      card.style.transform = 'none';
+    } else {
+      /* no target: zero-size spot in the middle still dims the page via its
+         9999px shadow, the card floats centered */
+      spot.style.borderWidth = '0';
+      spot.style.left = '50%'; spot.style.top = (scrollY + innerHeight*0.3) + 'px';
+      spot.style.width = '0'; spot.style.height = '0';
+      card.style.left = '50%'; card.style.top = (scrollY + innerHeight*0.36) + 'px';
+      card.style.transform = 'translateX(-50%)';
+    }
+  }
+  addEventListener('resize', function(){ if (document.body.contains(card)) show(idx); });
+  setTimeout(function(){ show(0); }, 400);
+})();
+</script>
 {% endblock %}

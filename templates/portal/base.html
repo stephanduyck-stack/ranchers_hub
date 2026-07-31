@@ -36,11 +36,12 @@
     </a>
     <div class="d-flex align-items-center gap-3">
       {% set ep = request.endpoint or '' %}
-      <a class="nav-link d-inline {{ 'text-warning' if ep=='portal.home' else 'text-white' }}" href="{{ url_for('portal.home') }}">Home</a>
-      <a class="nav-link d-inline {{ 'text-warning' if 'pricelist' in ep else 'text-white' }}" href="{{ url_for('portal.pricelist') }}">My Pricelist</a>
-      <a class="nav-link d-inline {{ 'text-warning' if ep.startswith('catalogue') else 'text-white' }}" href="{{ url_for('catalogue.view') }}">Catalogue</a>
-      <a class="nav-link d-inline {{ 'text-warning' if ep=='portal.order_new' else 'text-white' }}" href="{{ url_for('portal.order_new') }}">New Order</a>
-      <a class="nav-link d-inline {{ 'text-warning' if ep=='portal.messages' else 'text-white' }}" href="{{ url_for('portal.messages') }}">Messages{% if portal_unread %} <span class="badge badge-danger">{{ portal_unread }}</span>{% endif %}</a>
+      <a id="pnav-home" class="nav-link d-inline {{ 'text-warning' if ep=='portal.home' else 'text-white' }}" href="{{ url_for('portal.home') }}">Home</a>
+      <a id="pnav-pricelist" class="nav-link d-inline {{ 'text-warning' if 'pricelist' in ep else 'text-white' }}" href="{{ url_for('portal.pricelist') }}">My Pricelist</a>
+      <a id="pnav-catalogue" class="nav-link d-inline {{ 'text-warning' if ep.startswith('catalogue') else 'text-white' }}" href="{{ url_for('catalogue.view') }}">Catalogue</a>
+      <a id="pnav-order" class="nav-link d-inline {{ 'text-warning' if ep=='portal.order_new' else 'text-white' }}" href="{{ url_for('portal.order_new') }}">New Order</a>
+      <a id="pnav-messages" class="nav-link d-inline {{ 'text-warning' if ep=='portal.messages' else 'text-white' }}" href="{{ url_for('portal.messages') }}">Messages{% if portal_unread %} <span class="badge badge-danger">{{ portal_unread }}</span>{% endif %}</a>
+      <a id="pnav-help" class="nav-link d-inline {{ 'text-warning' if ep=='portal.guide' else 'text-white' }}" href="{{ url_for('portal.guide') }}">Help <i class="bi bi-question-circle"></i></a>
       {% if portal_outlets|length > 1 %}
       <form method="post" action="{{ url_for('portal.switch_outlet') }}" class="m-0">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

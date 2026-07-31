@@ -68,12 +68,15 @@ def thread(customer_id):
     if request.method == "POST":
         body = (request.form.get("body") or "").strip()
         if body:
-            db.session.add(Message(
+            m = Message(
                 customer_id=customer.id, sender_type="staff",
                 sender_user_id=current_user.id, sender_name=current_user.full_name,
-                body=body, read_by_staff=True, read_by_customer=False))
+                body=body, read_by_staff=True, read_by_customer=False)
+            db.session.add(m)
             log("message", "customer", customer.id, detail="staff message sent")
             db.session.commit()
+            # No immediate email: the notify sweep emails the customer only if
+            # the message is still unread after ~10 minutes (batched).
         return redirect(url_for("messages.thread", customer_id=customer.id))
 
     msgs = db.session.scalars(

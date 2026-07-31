@@ -34,29 +34,88 @@ def _sales_managers():
 
 @bp.route("/users")
 def users():
-    users = db.session.scalars(db.select(User).order_by(User.full_name)).all()
-    return render_template("admin/users.html", users=users)
+    """Users split into three tabs: internal staff, customer portal logins,
+    and distributor portal logins (split on the linked customer's segment)."""
+    all_users = db.session.scalars(db.select(User).order_by(User.full_name)).all()
+    internal, customer_logins, distributor_logins = [], [], []
+    for u in all_users:
+        if u.role != "customer":
+            internal.append(u)
+        elif u.customer and (u.customer.segment or "customer") == "distributor":
+            distributor_logins.append(u)
+        else:
+            customer_logins.append(u)
+    tab = request.args.get("tab", "internal")
+    if tab not in ("internal", "customers", "distributors"):
+        tab = "internal"
+    return render_template("admin/users.html", internal=internal,
+                           customer_logins=customer_logins,
+                           distributor_logins=distributor_logins, tab=tab)
 
 
 @bp.route("/users/new", methods=["GET", "POST"])
 def user_new():
-    customers = db.session.scalars(db.select(Customer).order_by(Customer.name)).all()
+    """New-user form, context-aware per users tab. kind=internal offers staff
+    roles only; kind=customer/distributor locks the role to a portal login,
+    filters the account picker to the matching segment, and derives the
+    username from the account name."""
+    kind = (request.form.get("kind") if request.method == "POST"
+            else request.args.get("kind")) or "internal"
+    if kind not in ("internal", "customer", "distributor"):
+        kind = "internal"
+    cust_q = db.select(Customer).filter_by(archived=False).order_by(Customer.name)
+    if kind in ("customer", "distributor"):
+        rows = db.session.scalars(cust_q).all()
+        customers = [c for c in rows
+                     if ((c.segment or "customer") == "distributor") == (kind == "distributor")]
+    else:
+        customers = db.session.scalars(cust_q).all()
+
+    def form(msg=None, level="danger"):
+        if msg:
+            flash(msg, level)
+        return render_template("admin/user_edit.html", user=None, kind=kind,
+                               customers=customers, managers=_sales_managers())
+
     if request.method == "POST":
-        username = (request.form.get("username") or "").strip()
-        if db.session.scalar(db.select(User).filter_by(username=username)):
-            flash("That username is taken.", "danger")
-            return render_template("admin/user_edit.html", user=None, customers=customers, managers=_sales_managers())
         pw = request.form.get("password") or ""
         if len(pw) < 8:
-            flash("Password must be at least 8 characters.", "danger")
-            return render_template("admin/user_edit.html", user=None, customers=customers, managers=_sales_managers())
-        role = request.form.get("role", "rep")
+            return form("Password must be at least 8 characters.")
         link_cid = request.form.get("link_customer_id")
+        if kind in ("customer", "distributor"):
+            # Portal login: role locked, username derived from the account name.
+            from blueprints.customers import portal_username
+            if not link_cid:
+                return form(f"Choose the {kind} this login belongs to.")
+            c = db.session.get(Customer, int(link_cid))
+            if c is None:
+                return form(f"Choose the {kind} this login belongs to.")
+            seg = c.segment or "customer"
+            if (seg == "distributor") != (kind == "distributor"):
+                return form(f"'{c.name}' is not a {kind}.")
+            role = "customer"
+            username = portal_username(c.name)
+            full_name = (request.form.get("full_name") or c.contact_name
+                         or c.name).strip()
+            email = request.form.get("email") or c.email
+        else:
+            username = (request.form.get("username") or "").strip()
+            if not username:
+                return form("Username is required.")
+            if db.session.scalar(db.select(User).filter_by(username=username)):
+                return form("That username is taken.")
+            role = request.form.get("role", "rep")
+            if role == "customer":
+                return form("Portal logins are created from the Customer or "
+                            "Distributor tab, or automatically when the "
+                            "customer is created.")
+            full_name = (request.form.get("full_name") or username).strip()
+            email = request.form.get("email")
         u = User(username=username,
-                 full_name=(request.form.get("full_name") or username).strip(),
-                 email=request.form.get("email"),
+                 full_name=full_name,
+                 email=email,
                  role=role,
-                 can_edit=bool(request.form.get("can_edit")),
+                 can_edit=bool(request.form.get("can_edit")) if kind == "internal" else False,
                  is_active=bool(request.form.get("is_active")),
                  customer_id=(int(link_cid) if role == "customer" and link_cid else None),
                  password_hash=hash_password(pw))
@@ -64,17 +123,25 @@ def user_new():
         u.manager_id = int(mgr) if (role == "rep" and mgr) else None
         cust_ids = request.form.getlist("customers")
         u.assigned_customers = db.session.scalars(
-            db.select(Customer).filter(Customer.id.in_(cust_ids))).all() if cust_ids else []
+            db.select(Customer).filter(Customer.id.in_(cust_ids))).all() \
+            if (cust_ids and role != "customer") else []
         out_ids = request.form.getlist("portal_customers")
         u.portal_customers = db.session.scalars(
             db.select(Customer).filter(Customer.id.in_(out_ids))).all() \
             if (u.role == "customer" and out_ids) else []
+        if u.role == "customer":
+            u.must_change_password = True
         db.session.add(u)
         log("user_create", "user", None, detail=f"{username} ({u.role}, edit={u.can_edit})")
         db.session.commit()
+        if u.role == "customer":
+            flash(f"Login created: username '{username}'. The user sets their "
+                  "own password at first sign-in.", "success")
+            return redirect(url_for("admin.users",
+                                    tab="distributors" if kind == "distributor" else "customers"))
         flash("User created.", "success")
         return redirect(url_for("admin.users"))
-    return render_template("admin/user_edit.html", user=None, customers=customers, managers=_sales_managers())
+    return form()
 
 
 @bp.route("/users/<int:user_id>", methods=["GET", "POST"])
@@ -316,6 +383,7 @@ def settings():
 
 
 COMMS_KEYS = ("smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from",
+              "smtp_reply_to",
               "sms_provider", "sms_api_key", "sms_username", "sms_sender")
 
 
@@ -388,74 +456,15 @@ def import_reports():
 
 
 # ---------------------------------------------------------------------------
-# Daily sales / financial data import (invoices & credit notes)
+# Daily sales / financial data import — consolidated 27 Jul 2026 into the
+# finance "Daily uploads" screen (customers.finance_uploads), which
+# auto-detects every export this screen handled (invoices, credit notes,
+# itemized, product pivot) plus payments and the receivables snapshot.
+# The endpoint stays as a redirect so old links keep working.
 # ---------------------------------------------------------------------------
 @bp.route("/sales-import", methods=["GET", "POST"])
 def sales_import():
-    from models import Invoice, SalesHistory
-    from services import sales_import as si
-    from services import product_import as pi
-
-    def _stats():
-        total = db.session.scalar(db.select(db.func.count(Invoice.id))) or 0
-        last = db.session.scalar(db.select(db.func.max(Invoice.invoice_date)))
-        prod_rows = db.session.scalar(db.select(db.func.count(SalesHistory.id))) or 0
-        prod_last = db.session.scalar(
-            db.select(db.func.max(SalesHistory.year * 12 + SalesHistory.month)))
-        prod_label = None
-        if prod_last:
-            y, m = (prod_last - 1) // 12, (prod_last - 1) % 12 + 1
-            prod_label = date(y, m, 1).strftime("%b %Y")
-        return total, last, prod_rows, prod_label
-
-    if request.method == "POST":
-        file = request.files.get("file")
-        layout = request.form.get("layout", "invoices")
-        if not file or not file.filename.lower().endswith((".xlsx", ".xlsm")):
-            flash("Please choose an .xlsx file.", "danger")
-            return redirect(url_for("admin.sales_import"))
-        os.makedirs(current_app.config["UPLOAD_DIR"], exist_ok=True)
-        from werkzeug.utils import secure_filename
-        safe_name = secure_filename(file.filename)
-        path = os.path.join(current_app.config["UPLOAD_DIR"],
-                            f"{datetime.utcnow():%Y%m%d%H%M%S}_{safe_name}")
-        file.save(path)
-
-        if layout == "product_pivot":
-            try:
-                r = pi.import_monthly_pivot(path)
-            except Exception as e:  # noqa: BLE001
-                db.session.rollback()
-                flash(f"Product import failed: {e}", "danger")
-                return redirect(url_for("admin.sales_import"))
-            log("import", "sales_history", None,
-                detail=(f"product pivot: {r['rows']} rows, {r['months']} month(s) "
-                        f"({r['span']}), {r['linked_pct']}% linked"),
-                commit=True)
-            flash(f"Imported {r['rows']} product rows across {r['months']} month(s) "
-                  f"({r['span']}). {r['linked_pct']}% of revenue linked to the catalogue.",
-                  "success")
-            return redirect(url_for("admin.sales_import"))
-
-        if layout not in si.LAYOUTS:
-            layout = "invoices"
-        try:
-            r = si.import_file(path, layout)
-        except Exception as e:  # noqa: BLE001
-            db.session.rollback()
-            flash(f"Import failed: {e}", "danger")
-            return redirect(url_for("admin.sales_import"))
-        log("import", "invoice", None,
-            detail=(f"sales import ({r['layout']}): {r['inserted']} new, "
-                    f"{r['updated']} updated, {r['matched_rows']}/{r['read']} matched"),
-            commit=True)
-        flash(f"Imported {r['read']} rows: {r['inserted']} new, {r['updated']} updated. "
-              f"{r['matched_rows']} matched to a customer.", "success")
-        return redirect(url_for("admin.sales_import"))
-
-    total, last, prod_rows, prod_label = _stats()
-    return render_template("admin/sales_import.html", total=total, last=last,
-                           prod_rows=prod_rows, prod_label=prod_label)
+    return redirect(url_for("customers.finance_uploads"))
 
 
 # ---------------------------------------------------------------------------

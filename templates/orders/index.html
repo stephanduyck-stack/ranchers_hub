@@ -14,7 +14,7 @@
     <a class="btn {{ 'btn-primary' if inbox_view else 'btn-outline-secondary' }}" href="{{ url_for('orders.index') }}"><i class="bi bi-inbox"></i> Inbox{% if counts.get('inbox') %} ({{ counts['inbox'] }}){% endif %}</a>
     {% endif %}
     <a class="btn {{ 'btn-primary' if (not status and not inbox_view) else 'btn-outline-secondary' }}" href="{{ url_for('orders.index', all=1) }}">All</a>
-    {% for s, lbl in [('draft','Draft'),('submitted','Submitted'),('placed','Placed'),('in_fulfillment','In fulfilment'),('pending','Pending'),('ready_for_dispatch','Ready for dispatch'),('out_for_delivery','Out for delivery'),('delivered','Delivered'),('cancelled','Cancelled')] %}
+    {% for s, lbl in [('draft','Draft'),('submitted','Submitted'),('placed','Placed'),('in_fulfillment','To deliver'),('pending','Pending'),('ready_for_dispatch','Ready for dispatch'),('out_for_delivery','Out for delivery'),('delivered','Delivered'),('cancelled','Cancelled')] %}
     <a class="btn {{ 'btn-primary' if status==s else 'btn-outline-secondary' }}" href="{{ url_for('orders.index', status=s) }}">
       {{ lbl }}{% if counts.get(s) %} ({{ counts[s] }}){% endif %}</a>
     {% endfor %}
@@ -42,7 +42,7 @@
         {% if o.status=='draft' %}<span class="badge bg-secondary">draft</span>
         {% elif o.status=='submitted' %}<span class="badge" style="background:#ED1C24">submitted</span>
         {% elif o.status=='placed' %}<span class="badge bg-dark">placed</span>
-        {% elif o.status=='in_fulfillment' %}<span class="badge" style="background:#F47A21">in fulfilment</span>
+        {% elif o.status=='in_fulfillment' %}<span class="badge" style="background:#F47A21">to deliver</span>
         {% elif o.status=='ready_for_dispatch' %}<span class="badge" style="background:#6E7149">ready for dispatch</span>
         {% elif o.status=='out_for_delivery' %}<span class="badge" style="background:#2E7D32">out for delivery</span>
         {% elif o.status=='dispatched' %}<span class="badge" style="background:#2E7D32">dispatched</span>
@@ -52,6 +52,11 @@
         {% elif o.status=='cancelled' %}<span class="badge badge-danger">cancelled</span>
         {% else %}<span class="badge bg-secondary">{{ o.status.replace('_',' ') }}</span>{% endif %}
         {% if order_delay(o)[0] %}<span class="badge badge-danger"><i class="bi bi-alarm"></i> delayed</span>{% endif %}
+        {% if works_inbox and o.status in ['submitted','placed'] %}
+          {% set nshort = o.short_stock_lines|length %}
+          {% if nshort %}<span class="badge badge-warn" title="Ordered quantity exceeds stock on hand">{{ nshort }} short</span>
+          {% else %}<span class="badge badge-ok" title="All lines covered by stock on hand">stock ok</span>{% endif %}
+        {% endif %}
       </td>
       <td class="text-end money">{{ o.total|money(o.currency) }}</td>
       <td class="small">{{ o.order_date }}</td>

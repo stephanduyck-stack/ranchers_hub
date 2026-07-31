@@ -73,6 +73,26 @@
         </datalist>
         <div class="form-text">Your suggestion. The Pricing Officer approves the final terms.</div></div>
       {% endif %}
+      <div class="col-md-3 mb-3"><label class="form-label">Back orders</label>
+        <input type="hidden" name="backorders_marker" value="1">
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" name="backorders_allowed" value="1" id="boAllowed"
+                 {{ 'checked' if not customer or customer.backorders_allowed }}>
+          <label class="form-check-label" for="boAllowed">Customer accepts back orders</label>
+        </div>
+        <div class="form-text">Ticked: fulfilment shortfalls raise a back order automatically. Unticked: never.</div></div>
+      {% if not customer or current_user.can_clear_credit %}
+      <div class="col-md-3 mb-3"><label class="form-label">Credit limit — amount (UGX)</label>
+        <input class="form-control" name="credit_limit_amount"
+               value="{{ customer.credit_limit_ugx if customer and customer.credit_limit_ugx else '' }}"
+               placeholder="e.g. 5,000,000">
+        <div class="form-text">Blank or 0 = no value limit.</div></div>
+      <div class="col-md-3 mb-3"><label class="form-label">Credit limit — days</label>
+        <input class="form-control" name="credit_limit_days"
+               value="{{ customer.credit_days if customer and customer.credit_days else '' }}"
+               placeholder="e.g. 30">
+        <div class="form-text">Runs from onboarding day; any invoice unpaid longer holds new orders. Whichever limit trips first kicks in.</div></div>
+      {% endif %}
     </div>
 
     <div id="distBox" class="rf-card p-3 mb-3 {{ '' if is_distributor else 'd-none' }}" style="background:#fbf2e7">

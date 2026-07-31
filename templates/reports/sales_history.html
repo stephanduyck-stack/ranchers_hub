@@ -81,11 +81,12 @@
     <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Top products <span class="text-muted small fw-normal">(from product pivot)</span></h2>
     <div class="table-responsive">
     <table class="table table-sm align-middle mb-0">
-      <thead><tr><th>Product</th>{% for y in prod_years %}<th class="text-end">{{ y }}</th>{% endfor %}<th class="text-end">Total</th></tr></thead>
+      <thead><tr><th>Product</th>{% for y in prod_years %}<th class="text-end">{{ y }}</th>{% endfor %}<th class="text-end">Qty</th><th class="text-end">Total</th></tr></thead>
       <tbody>
-      {% for name, total, by in top_products %}
+      {% for name, total, qty, by in top_products %}
         <tr><td class="small fw-semibold">{{ loop.index }}. {{ name }}</td>
           {% for y in prod_years %}<td class="text-end small money">{{ '{:,.0f}'.format(by.get(y,0)) }}</td>{% endfor %}
+          <td class="text-end small text-muted">{{ '{:,.0f}'.format(qty) }}</td>
           <td class="text-end money fw-semibold">{{ '{:,.0f}'.format(total) }}</td></tr>
       {% endfor %}
       </tbody>

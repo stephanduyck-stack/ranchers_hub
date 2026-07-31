@@ -13,7 +13,11 @@ def email_configured():
     return bool(settings_svc.get("smtp_host"))
 
 
-def send_email(to_addr, subject, body):
+def send_email(to_addr, subject, body, html=None, inline_images=None):
+    """Send a plain-text email; when `html` is given the message goes out as
+    multipart/alternative (text fallback + HTML). `inline_images` is an
+    optional dict {cid: filepath} of images embedded in the HTML part and
+    referenced as <img src="cid:...">."""
     if not to_addr:
         return (False, "no email address")
     if not email_configured():
@@ -31,7 +35,28 @@ def send_email(to_addr, subject, body):
     msg["From"] = frm
     msg["To"] = to_addr
     msg["Subject"] = subject or "(no subject)"
+    # Deliverability headers: a missing Message-ID or Date is a spam signal
+    # on its own. The Message-ID domain follows the From address.
+    from email.utils import formatdate, make_msgid, parseaddr
+    msg["Date"] = formatdate(localtime=True)
+    from_domain = (parseaddr(frm)[1].split("@") + [None])[1]
+    msg["Message-ID"] = make_msgid(domain=from_domain) if from_domain else make_msgid()
+    reply_to = settings_svc.get("smtp_reply_to")
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg.set_content(body or "")
+    if html:
+        msg.add_alternative(html, subtype="html")
+        if inline_images:
+            import os
+            html_part = msg.get_payload()[-1]
+            for cid, path in inline_images.items():
+                if not (path and os.path.exists(path)):
+                    continue
+                ext = os.path.splitext(path)[1].lstrip(".").lower() or "png"
+                with open(path, "rb") as f:
+                    html_part.add_related(f.read(), maintype="image",
+                                          subtype=ext, cid=f"<{cid}>")
     try:
         with smtplib.SMTP(host, port, timeout=15) as s:
             try:

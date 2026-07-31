@@ -46,7 +46,7 @@
   <a href="{{ url_for('orders.index') }}"><div class="rf-kpi"><div class="num" style="color:#ED1C24">{{ risk.delayed }}</div><div class="lbl">Delayed</div></div></a>
   <a href="{{ url_for('stock.report_oos') }}"><div class="rf-kpi"><div class="num" style="color:#ED1C24">{{ risk.oos }}</div><div class="lbl">Out of stock</div></div></a>
   <a href="{{ url_for('stock.index') }}"><div class="rf-kpi"><div class="num" style="color:#F9A03F">{{ risk.low }}</div><div class="lbl">Low stock</div></div></a>
-  <a href="{{ url_for('customers.index') }}"><div class="rf-kpi"><div class="num">{{ risk.new_customers }}</div><div class="lbl">New customers (MTD)</div></div></a>
+  <a href="{{ url_for('customers.index', since='mtd') }}"><div class="rf-kpi"><div class="num">{{ risk.new_customers }}</div><div class="lbl">New customers (MTD)</div></div></a>
 </div>
 
 <!-- Trend + channel mix -->
@@ -72,7 +72,7 @@
 <div class="row g-3 mt-0">
   <div class="col-lg-4">
     <div class="rf-card p-3 h-100">
-      <h2 class="h6"><i class="bi bi-star text-rf-orange"></i> Top customers <span class="text-muted small fw-normal">(90 days)</span></h2>
+      <h2 class="h6"><i class="bi bi-star text-rf-orange"></i> Top customers <span class="text-muted small fw-normal">(last 30 days)</span></h2>
       <table class="table table-sm align-middle mb-0">
         <tbody>
         {% for name, val in top_customers %}
@@ -84,7 +84,7 @@
   </div>
   <div class="col-lg-4">
     <div class="rf-card p-3 h-100">
-      <h2 class="h6"><i class="bi bi-people-fill text-rf-orange"></i> Rep leaderboard <span class="text-muted small fw-normal">(90 days)</span></h2>
+      <h2 class="h6"><i class="bi bi-people-fill text-rf-orange"></i> Rep leaderboard <span class="text-muted small fw-normal">(last 30 days)</span></h2>
       <table class="table table-sm align-middle mb-0">
         <tbody>
         {% for name, val in rep_leaders %}
@@ -96,11 +96,13 @@
   </div>
   <div class="col-lg-4">
     <div class="rf-card p-3 h-100">
-      <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Top products <span class="text-muted small fw-normal">(90 days)</span></h2>
+      <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Top products <span class="text-muted small fw-normal">(last 30 days)</span></h2>
       <table class="table table-sm align-middle mb-0">
         <tbody>
-        {% for name, val in top_products %}
-          <tr><td class="fw-semibold">{{ loop.index }}. {{ name }}</td><td class="text-end money">{{ ugx(val) }}</td></tr>
+        {% for name, val, qty in top_products %}
+          <tr><td class="fw-semibold">{{ loop.index }}. {{ name }}</td>
+            <td class="text-end small text-muted">{{ '{:,.0f}'.format(qty) }}</td>
+            <td class="text-end money">{{ ugx(val) }}</td></tr>
         {% else %}<tr><td class="text-muted">No data yet.</td></tr>{% endfor %}
         </tbody>
       </table>
@@ -118,6 +120,14 @@
         {% set tot = dist_mtd + direct_mtd %}
         {% if tot %}{{ '%.0f'|format(dist_mtd / tot * 100) }}% of this month’s sales{% else %}no sales yet this month{% endif %}
       </div>
+      <div class="d-flex justify-content-between mt-2">
+        <span class="small text-uppercase text-muted">Export distributors</span>
+        <span class="fw-semibold" style="color:#4E7CA1">{{ ugx(dist_exp_mtd) }}</span>
+      </div>
+      <div class="d-flex justify-content-between">
+        <span class="small text-uppercase text-muted">Local distributors</span>
+        <span class="fw-semibold" style="color:#6E7149">{{ ugx(dist_loc_mtd) }}</span>
+      </div>
       <hr class="my-2">
       <div class="text-muted small text-uppercase">Direct customer sales (MTD)</div>
       <div class="h5 mb-0" style="color:#2B2B2B">{{ ugx(direct_mtd) }}</div>
@@ -125,11 +135,17 @@
   </div>
   <div class="col-lg-8">
     <div class="rf-card p-3 h-100">
-      <h2 class="h6"><i class="bi bi-truck text-rf-orange"></i> Top distributors <span class="text-muted small fw-normal">(90 days)</span></h2>
+      <h2 class="h6"><i class="bi bi-truck text-rf-orange"></i> Top distributors <span class="text-muted small fw-normal">(last 30 days)</span>
+        <span class="float-end small fw-normal">
+          <span class="badge" style="background:#4E7CA1">Export {{ ugx(d30_exp) }}</span>
+          <span class="badge" style="background:#6E7149">Local {{ ugx(d30_loc) }}</span>
+        </span></h2>
       <table class="table table-sm align-middle mb-0">
         <tbody>
-        {% for name, val in top_distributors %}
-          <tr><td class="fw-semibold">{{ loop.index }}. {{ name }}</td><td class="text-end money">{{ ugx(val) }}</td></tr>
+        {% for name, val, band in top_distributors %}
+          <tr><td class="fw-semibold">{{ loop.index }}. {{ name }}</td>
+            <td><span class="badge" style="background:{{ '#4E7CA1' if band == 'Export' else '#6E7149' }}">{{ band }}</span></td>
+            <td class="text-end money">{{ ugx(val) }}</td></tr>
         {% else %}<tr><td class="text-muted">No distributor sales in this period.</td></tr>{% endfor %}
         </tbody>
       </table>

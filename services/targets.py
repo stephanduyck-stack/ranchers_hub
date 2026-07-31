@@ -44,7 +44,7 @@ def rep_actuals(rep, year, month):
     if assigned_ids:
         if idx <= cut:
             for i in db.session.scalars(db.select(Invoice).where(
-                    Invoice.customer_id.in_(assigned_ids), Invoice.currency == "UGX",
+                    Invoice.customer_id.in_(assigned_ids),
                     Invoice.payment_status != "Reversed", Invoice.invoice_date.isnot(None))):
                 if i.invoice_date.year * 12 + i.invoice_date.month != idx:
                     continue

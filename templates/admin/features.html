@@ -28,8 +28,12 @@
         <input class="form-control form-control-sm" name="smtp_user" value="{{ comms.smtp_user }}"></div>
       <div class="col-md-6"><label class="form-label small">Password</label>
         <input class="form-control form-control-sm" type="password" name="smtp_pass" value="{{ comms.smtp_pass }}" placeholder="{{ '••••••' if comms.smtp_pass else '' }}"></div>
-      <div class="col-md-12"><label class="form-label small">From address</label>
-        <input class="form-control form-control-sm" name="smtp_from" value="{{ comms.smtp_from }}" placeholder="sales@ranchersfinest.com"></div>
+      <div class="col-md-6"><label class="form-label small">From address</label>
+        <input class="form-control form-control-sm" name="smtp_from" value="{{ comms.smtp_from }}" placeholder="portal@ranchersfinest.com">
+        <div class="form-text">Use an address on a domain with SPF/DKIM/DMARC set up — the biggest factor against spam filters.</div></div>
+      <div class="col-md-6"><label class="form-label small">Reply-to (optional)</label>
+        <input class="form-control form-control-sm" name="smtp_reply_to" value="{{ comms.smtp_reply_to }}" placeholder="sales@ranchersfinest.com">
+        <div class="form-text">Where customer replies land when From is a no-reply box.</div></div>
     </div>
   </div>
 

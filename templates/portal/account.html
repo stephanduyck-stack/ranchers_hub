@@ -1,6 +1,11 @@
 {% extends "portal/base.html" %}
 {% block content %}
 <h1 class="h5 rf-head mb-3">My account</h1>
+{% if current_user.must_change_password %}
+<div class="alert alert-warning" style="max-width:460px">Your account uses the
+  temporary password from your welcome email. Set your own password below to
+  start using the portal.</div>
+{% endif %}
 <div class="rf-card p-4" style="max-width:460px">
   <h2 class="h6 mb-3">Change password</h2>
   <form method="post">

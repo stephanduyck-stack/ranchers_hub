@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block heading %}Invoice {{ order.number }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div>
+    <span class="fw-semibold">{{ order.customer.name if order.customer else '—' }}</span>
+    <span class="text-muted small"> · {{ order.dnote_number or 'no DN number' }}
+      · delivered {{ order.delivered_at.strftime('%d %b %Y %H:%M') if order.delivered_at else '—' }}
+      · driver {{ order.assigned_driver.full_name if order.assigned_driver else '—' }}
+      {% if order.momo_ref %} · MoMo ref {{ order.momo_ref }}{% endif %}</span>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('invoicing.dnote_pdf', order_id=order.id) }}"><i class="bi bi-truck"></i> DN as dispatched</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('invoicing.index') }}"><i class="bi bi-arrow-left"></i> Back to queue</a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="rf-card p-2">
+      <div class="small text-muted mb-1"><i class="bi bi-card-image"></i> Signed delivery note (uploaded by the driver)</div>
+      {% if order.pod_filename %}
+        {% if pod_is_image %}
+          <a href="{{ url_for('invoicing.pod', order_id=order.id) }}" target="_blank">
+            <img src="{{ url_for('invoicing.pod', order_id=order.id) }}" class="img-fluid rounded" alt="Signed delivery note"></a>
+        {% else %}
+          <a class="btn btn-outline-primary" target="_blank" href="{{ url_for('invoicing.pod', order_id=order.id) }}">
+            <i class="bi bi-file-earmark-pdf"></i> Open the signed note</a>
+        {% endif %}
+      {% else %}
+        <div class="text-danger py-3">No signed note on file — chase the driver before invoicing.</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <form method="post" action="{{ url_for('invoicing.post_invoice', order_id=order.id) }}"
+          onsubmit="return confirm('Post the fiscal invoice for the ACCEPTED quantities? This books revenue and goes to EFRIS.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="table-responsive rf-card">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Item</th><th class="text-end">Dispatched</th>
+          <th class="text-end" style="width:110px">Accepted</th>
+          <th style="width:230px">Reason if short</th>
+          <th class="text-end">Unit price</th></tr></thead>
+        <tbody>
+        {% for l in order.lines %}{% if l.dispatched_qty and l.dispatched_qty > 0 %}
+          <tr>
+            <td class="small">{{ l.description }}{% if l.pack_size %} <span class="text-muted">{{ l.pack_size }}</span>{% endif %}</td>
+            <td class="text-end">{{ '%g'|format(l.dispatched_qty) }}</td>
+            <td class="text-end">
+              <input type="number" step="any" min="0" max="{{ l.dispatched_qty }}"
+                     name="accepted_{{ l.id }}" value="{{ '%g'|format(l.dispatched_qty) }}"
+                     class="form-control form-control-sm text-end accepted-input"
+                     data-dispatched="{{ l.dispatched_qty }}" data-line="{{ l.id }}">
+            </td>
+            <td>
+              <select name="reason_{{ l.id }}" class="form-select form-select-sm reason-select"
+                      id="reason_{{ l.id }}" disabled>
+                <option value="">— quantity matches —</option>
+                {% for code, (label, returns) in reasons.items() %}
+                <option value="{{ code }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="text-end money small">{{ l.unit_price|money(order.currency) }}</td>
+          </tr>
+        {% endif %}{% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+        <div class="small text-muted">
+          Dispatched value: <span class="money">{{ order.dispatched_total|money(order.currency) }}</span>.
+          The invoice bills the accepted quantities only. Goods marked
+          “returned to store” go back into stock automatically.
+        </div>
+        <button class="btn btn-primary"><i class="bi bi-receipt"></i> Post invoice for accepted quantities</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.accepted-input').forEach(function (inp) {
+  function sync() {
+    var short = parseFloat(inp.dataset.dispatched) - parseFloat(inp.value || '0');
+    var sel = document.getElementById('reason_' + inp.dataset.line);
+    if (short > 1e-9) {
+      sel.disabled = false; sel.required = true;
+      if (!sel.value) sel.classList.add('border-danger');
+    } else {
+      sel.disabled = true; sel.required = false; sel.value = '';
+      sel.classList.remove('border-danger');
+    }
+  }
+  inp.addEventListener('input', sync); sync();
+});
+document.querySelectorAll('.reason-select').forEach(function (sel) {
+  sel.addEventListener('change', function () {
+    if (sel.value) sel.classList.remove('border-danger');
+  });
+});
+</script>
+{% endblock %}

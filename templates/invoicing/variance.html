@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block heading %}Delivery discrepancies{% endblock %}
+{% block content %}
+
+{% macro pct(v) %}{{ '%.2f'|format(v) }}%{% endmacro %}
+{% macro ugx(v) %}{{ '{:,.0f}'.format(v) }}{% endmacro %}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div class="text-muted small">
+    Dispatched against accepted, from the signed delivery notes. All figures in
+    UGX; export orders convert at the rate stamped on the order.
+  </div>
+  <form class="d-flex gap-2" method="get">
+    <select class="form-select form-select-sm" name="days" onchange="this.form.submit()">
+      {% for d in [7, 30, 90, 365] %}
+      <option value="{{ d }}" {{ 'selected' if d == days }}>Last {{ d }} days</option>
+      {% endfor %}
+    </select>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('invoicing.variance_csv', days=days) }}"><i class="bi bi-file-earmark-spreadsheet"></i> CSV</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('invoicing.index') }}"><i class="bi bi-arrow-left"></i> Queue</a>
+  </form>
+</div>
+
+{# ---- scale: the question "is this a huge issue" answered with arithmetic ---- #}
+<div class="rf-card p-3 mb-3">
+  <div class="row text-center g-3">
+    <div class="col-md">
+      <div class="lbl small text-muted">Dispatched value checked</div>
+      <div class="h5 mb-0 money">{{ ugx(totals.base) }}</div>
+      <div class="small text-muted">{{ totals.n_checked }} deliveries</div>
+    </div>
+    <div class="col-md">
+      <div class="lbl small text-muted">Total short</div>
+      <div class="h5 mb-0 money">{{ ugx(totals.value) }}</div>
+      <div class="small text-muted">{{ pct(totals.rate) }} of dispatched</div>
+    </div>
+    <div class="col-md">
+      <div class="lbl small text-muted">Goods gone (money at risk)</div>
+      <div class="h5 mb-0 money text-danger">{{ ugx(totals.gone) }}</div>
+      <div class="small text-muted">{{ pct(totals.gone_rate) }} of dispatched</div>
+    </div>
+    <div class="col-md">
+      <div class="lbl small text-muted">Returned to store</div>
+      <div class="h5 mb-0 money">{{ ugx(totals.returned) }}</div>
+      <div class="small text-muted">back in stock, reconciles</div>
+    </div>
+    <div class="col-md">
+      <div class="lbl small text-muted">Deliveries with a shortfall</div>
+      <div class="h5 mb-0">{{ totals.n_var }} / {{ totals.n_checked }}</div>
+      <div class="small text-muted">{{ pct(totals.hit_rate) }} of deliveries</div>
+    </div>
+  </div>
+</div>
+
+<div class="alert {{ 'alert-danger' if totals.gone_rate >= 1.0 else ('alert-warning' if totals.gone_rate >= 0.3 else 'alert-success') }} py-2">
+  <strong>Scale:</strong>
+  goods worth <span class="money">{{ ugx(totals.gone) }}</span> left the store, were not accepted, and did not come back
+  {% if totals.n_checked %}across {{ totals.n_checked }} checked deliveries in {{ days }} days{% endif %}.
+  That is {{ pct(totals.gone_rate) }} of the value dispatched, running at roughly
+  <span class="money">{{ ugx(totals.annualised_gone) }}</span> a year at this rate.
+  {% if totals.n_checked < 20 %}
+  <span class="d-block small mt-1">Only {{ totals.n_checked }} deliveries carry accepted quantities so far. Read every rate below as indicative until the sample grows.</span>
+  {% endif %}
+</div>
+
+{# ---- flags ---- #}
+{% if n_flagged or pairs_repeat %}
+<div class="rf-card p-3 mb-3 border-danger">
+  <h2 class="h6 mb-2 text-danger"><i class="bi bi-exclamation-triangle"></i> Worth checking</h2>
+  <div class="small text-muted mb-2">
+    Flagged when goods gone exceed {{ pct(rate_absolute) }} of the value that party
+    handled, or {{ rate_multiple }}× the company rate ({{ pct(totals.gone_rate) }}), on at least
+    <span class="money">{{ ugx(min_base) }}</span> dispatched. A flag is arithmetic, not an accusation:
+    pull the signed notes and ask.
+  </div>
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="small fw-semibold mb-1">Drivers</div>
+      <table class="table table-sm mb-0">
+        <tbody>
+        {% for r in by_driver if r.flag %}
+          <tr><td class="small">{{ r.label }}</td>
+            <td class="text-end small">{{ ugx(r.gone) }} gone on {{ ugx(r.base) }}</td>
+            <td class="text-end"><span class="badge badge-danger">{{ pct(r.gone_rate) }}</span></td>
+            <td class="small text-muted">{{ r.top_reason }}</td></tr>
+        {% else %}
+          <tr><td class="text-muted small py-2">No driver above the threshold.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="col-lg-6">
+      <div class="small fw-semibold mb-1">Customers</div>
+      <table class="table table-sm mb-0">
+        <tbody>
+        {% for r in by_customer if r.flag %}
+          <tr><td class="small">{{ r.label }}</td>
+            <td class="text-end small">{{ ugx(r.gone) }} gone on {{ ugx(r.base) }}</td>
+            <td class="text-end"><span class="badge badge-danger">{{ pct(r.gone_rate) }}</span></td>
+            <td class="small text-muted">{{ r.top_reason }}</td></tr>
+        {% else %}
+          <tr><td class="text-muted small py-2">No customer above the threshold.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if pairs_repeat %}
+  <div class="mt-3">
+    <div class="small fw-semibold mb-1">Same driver, same customer, {{ repeat_min }} times or more with goods gone</div>
+    <div class="small text-muted mb-1">The pattern a one-off scale difference does not produce.</div>
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Driver → customer</th><th class="text-end">Deliveries short</th>
+        <th class="text-end">Gone</th><th class="text-end">Of value handled</th><th>Usual reason</th></tr></thead>
+      <tbody>
+      {% for p in pairs_repeat %}
+        <tr><td class="small">{{ p.label }}</td>
+          <td class="text-end">{{ p.n_var_orders }} of {{ p.n_orders }}</td>
+          <td class="text-end money">{{ ugx(p.gone) }}</td>
+          <td class="text-end"><span class="badge {{ 'badge-danger' if p.gone_rate >= rate_absolute else 'badge-warn' }}">{{ pct(p.gone_rate) }}</span></td>
+          <td class="small text-muted">{{ p.top_reason }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="alert alert-success py-2"><i class="bi bi-check2-circle"></i>
+  No driver, customer or driver-customer pair stands out above the thresholds in this window.</div>
+{% endif %}
+
+{# ---- trend ---- #}
+{% if trend|length > 1 %}
+<div class="rf-card mb-3">
+  <div class="px-3 pt-2 fw-semibold"><i class="bi bi-graph-up"></i> Week by week
+    <span class="text-muted small fw-normal">is it growing?</span></div>
+  <div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Week of</th><th class="text-end">Deliveries</th>
+      <th class="text-end">Dispatched</th><th class="text-end">Short</th>
+      <th class="text-end">Gone</th><th class="text-end">Gone rate</th><th></th></tr></thead>
+    <tbody>
+    {% for w in trend %}
+      <tr>
+        <td class="small">{{ w.week.strftime('%d %b %Y') }}</td>
+        <td class="text-end">{{ w.n_orders }}</td>
+        <td class="text-end money small">{{ ugx(w.base) }}</td>
+        <td class="text-end money small">{{ ugx(w.value) }}</td>
+        <td class="text-end money">{{ ugx(w.gone) }}</td>
+        <td class="text-end"><span class="badge {{ 'badge-danger' if w.gone_rate >= rate_absolute else ('badge-warn' if w.gone_rate > totals.gone_rate else 'badge-ok') }}">{{ pct(w.gone_rate) }}</span></td>
+        <td style="width:35%">
+          <div class="progress" style="height:6px">
+            <div class="progress-bar bg-danger" style="width: {{ [w.gone_rate * 10, 100]|min }}%"></div>
+          </div>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
+{# ---- coverage: what the report cannot see ---- #}
+<div class="rf-card mb-3 {{ 'border-danger' if cov_totals.checked_rate < 90 }}">
+  <div class="px-3 pt-2 fw-semibold"><i class="bi bi-eye-slash"></i> Coverage
+    <span class="text-muted small fw-normal">what this report cannot see</span></div>
+  <div class="px-3 small text-muted">
+    Everything above only counts deliveries whose accepted quantities were recorded.
+    The way to stay out of a discrepancy report is to make sure nobody ever checks.
+    Of {{ cov_totals.delivered }} deliveries in this window, {{ cov_totals.checked }}
+    ({{ pct(cov_totals.checked_rate) }}) were checked and {{ cov_totals.filed }}
+    ({{ pct(cov_totals.filed_rate) }}) have the physical signed note filed.
+    Unchecked value: <span class="money fw-semibold">{{ ugx(cov_totals.unchecked_value) }}</span>.
+  </div>
+  <div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Driver</th><th class="text-end">Delivered</th>
+      <th class="text-end">Checked</th><th class="text-end">Paper filed</th>
+      <th class="text-end">No signed note uploaded</th>
+      <th class="text-end">Value never checked</th></tr></thead>
+    <tbody>
+    {% for r in coverage %}
+      <tr class="{{ 'table-danger' if r.checked_rate < 90 }}">
+        <td class="small">{{ r.label }}</td>
+        <td class="text-end">{{ r.delivered }}</td>
+        <td class="text-end"><span class="badge {{ 'badge-ok' if r.checked_rate >= 95 else ('badge-warn' if r.checked_rate >= 80 else 'badge-danger') }}">{{ pct(r.checked_rate) }}</span></td>
+        <td class="text-end"><span class="badge {{ 'badge-ok' if r.filed_rate >= 95 else ('badge-warn' if r.filed_rate >= 80 else 'badge-danger') }}">{{ pct(r.filed_rate) }}</span></td>
+        <td class="text-end {{ 'text-danger fw-semibold' if r.no_pod }}">{{ r.no_pod }}</td>
+        <td class="text-end money">{{ ugx(r.unchecked_value) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-3">No deliveries in this window.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{# ---- rollups ---- #}
+{% macro rolltable(title, icon, rows, who) %}
+<div class="rf-card mb-3">
+  <div class="px-3 pt-2 fw-semibold"><i class="bi {{ icon }}"></i> {{ title }}</div>
+  <div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <thead><tr><th>{{ who }}</th><th class="text-end">Dispatched</th>
+      <th class="text-end">Deliveries</th><th class="text-end">Short</th>
+      <th class="text-end">Returned</th><th class="text-end">Gone</th>
+      <th class="text-end">Gone rate</th><th class="text-end">Qty short</th>
+      <th>Usual reason</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      {% if r.value > 0 %}
+      <tr class="{{ 'table-danger' if r.flag }}">
+        <td class="small">{{ r.label }}
+          {% if r.flag %}<span class="badge badge-danger">check</span>{% endif %}</td>
+        <td class="text-end money small">{{ ugx(r.base) }}</td>
+        <td class="text-end small">{{ r.n_var_orders }} / {{ r.n_orders }}</td>
+        <td class="text-end money small">{{ ugx(r.value) }}</td>
+        <td class="text-end money small text-muted">{{ ugx(r.returned) }}</td>
+        <td class="text-end money fw-semibold">{{ ugx(r.gone) }}</td>
+        <td class="text-end">
+          {% if r.rated %}<span class="badge {{ 'badge-danger' if r.flag else ('badge-warn' if r.gone_rate > totals.gone_rate else 'badge-ok') }}">{{ pct(r.gone_rate) }}</span>
+          {% else %}<span class="small text-muted" title="Base below {{ ugx(min_base) }} — too small to rate">n/a</span>{% endif %}
+        </td>
+        <td class="text-end small">{{ '%g'|format(r.qty) }}</td>
+        <td class="small text-muted">{{ r.top_reason }}</td>
+      </tr>
+      {% endif %}
+    {% else %}
+      <tr><td colspan="9" class="text-center text-muted py-3">No discrepancies.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endmacro %}
+
+{{ rolltable('By delivery driver', 'bi-person-badge', by_driver, 'Driver') }}
+{{ rolltable('By customer', 'bi-shop', by_customer, 'Customer') }}
+{{ rolltable('By product', 'bi-box-seam', by_product, 'Product') }}
+{{ rolltable('By driver and customer', 'bi-diagram-2', by_pair, 'Driver → customer') }}
+
+{# ---- detail ---- #}
+<h2 class="h6 mt-4 mb-2"><i class="bi bi-list-ul"></i> Every short line
+  <span class="text-muted small fw-normal">({{ detail|length }})</span></h2>
+<div class="table-responsive rf-card">
+<table class="table table-sm align-middle mb-0">
+  <thead><tr><th>Recorded</th><th>Order</th><th>DN</th><th>Filing</th><th>Customer</th><th>Driver</th>
+    <th>Item</th><th class="text-end">Dispatched</th><th class="text-end">Accepted</th>
+    <th class="text-end">Short</th><th>Reason</th><th class="text-end">Value</th><th>Clerk</th></tr></thead>
+  <tbody>
+  {% for l in detail %}
+    <tr class="{{ 'table-warning' if not l.variance_returns_goods }}">
+      <td class="small">{{ l.order.accepted_recorded_at.strftime('%d %b %H:%M') if l.order.accepted_recorded_at else '—' }}</td>
+      <td class="small">{{ l.order.number }}</td>
+      <td class="small">{{ l.order.dnote_number or '—' }}</td>
+      <td class="small">{% if l.order.dnote_filing_no %}{{ l.order.dnote_filing_no }}{% else %}<span class="badge badge-warn" title="Physical signed note not filed">no paper</span>{% endif %}</td>
+      <td class="small">{{ l.order.customer.name if l.order.customer else '—' }}</td>
+      <td class="small">{{ l.order.assigned_driver.full_name if l.order.assigned_driver else '—' }}</td>
+      <td class="small">{{ l.description }}</td>
+      <td class="text-end">{{ '%g'|format(l.dispatched_qty) }}</td>
+      <td class="text-end">{{ '%g'|format(l.accepted_qty) }}</td>
+      <td class="text-end fw-semibold">{{ '%g'|format(l.variance_qty) }}</td>
+      <td class="small">{{ l.variance_reason_label }}
+        {% if not l.variance_returns_goods %}<span class="badge badge-danger">gone</span>{% endif %}</td>
+      <td class="text-end money">{{ l.variance_value|money(l.order.currency) }}</td>
+      <td class="small text-muted">{{ l.order.accepted_recorded_by.full_name if l.order.accepted_recorded_by else '—' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="13" class="text-center text-muted py-4">No discrepancies in this window.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

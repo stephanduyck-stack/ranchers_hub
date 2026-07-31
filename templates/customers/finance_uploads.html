@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block heading %}Daily finance uploads{% endblock %}
+{% block content %}
+<p class="text-muted" style="max-width:760px">Drop the three daily Odoo exports here — in any order, together or one by one.
+The file type is recognised automatically and re-uploading the same file changes nothing.</p>
+
+<div class="row g-3 mb-3" style="max-width:980px">
+  <div class="col-md-4">
+    <div class="rf-card p-3 h-100">
+      <div class="fw-semibold"><i class="bi bi-receipt text-rf-orange"></i> Itemized invoices</div>
+      <div class="small text-muted">Journal Entry (account.move), one row per invoice line. Updates customer statements and product history.</div>
+      <div class="small mt-2">{{ '{:,}'.format(inv_count) }} invoices on record{% if inv_last %} · latest {{ inv_last.strftime('%d %b %Y') }}{% endif %}</div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="rf-card p-3 h-100">
+      <div class="fw-semibold"><i class="bi bi-cash-coin text-rf-orange"></i> Payments</div>
+      <div class="small text-muted">Payments (account.payment). Updates the payment side of customer statements.</div>
+      <div class="small mt-2">{{ '{:,}'.format(pay_count) }} payments on record{% if pay_last %} · latest {{ pay_last.strftime('%d %b %Y') }}{% endif %}</div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="rf-card p-3 h-100">
+      <div class="fw-semibold"><i class="bi bi-speedometer text-rf-orange"></i> Customer receivables</div>
+      <div class="small text-muted">Contact (res.partner) with Total Receivable. Resets every customer's outstanding balance — this file drives the credit limits.</div>
+      <div class="small mt-2">{{ '{:,}'.format(snap_count) }} balances{% if snap_date %} · snapshot {{ snap_date.strftime('%d %b %Y') }}{% endif %}</div>
+    </div>
+  </div>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="rf-card p-3 mb-4" style="max-width:980px">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label class="form-label fw-semibold" for="files"><i class="bi bi-cloud-arrow-up"></i> Upload files (.xlsx)</label>
+  <input class="form-control" type="file" id="files" name="files" multiple accept=".xlsx,.xlsm" required>
+  <div class="small text-muted mt-2">You can select all three files at once.</div>
+  <button class="btn btn-primary mt-3"><i class="bi bi-upload"></i> Upload &amp; process</button>
+</form>
+
+<h2 class="h6">Recent uploads</h2>
+<div class="rf-card p-0" style="max-width:980px">
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr><th>When</th><th>File</th><th class="text-end">Rows</th><th class="text-end">Unmatched names</th></tr></thead>
+    <tbody>
+    {% for r in recent %}
+      <tr>
+        <td class="small">{{ r.ts.strftime('%d %b %H:%M') }}</td>
+        <td class="small">{{ r.source }}</td>
+        <td class="text-end small">{{ '{:,}'.format(r.rows_ok or 0) }}</td>
+        <td class="text-end small {{ 'text-danger' if r.rows_failed }}">{{ r.rows_failed or 0 }}</td>
+      </tr>
+    {% else %}<tr><td colspan="4" class="text-center text-muted py-3">No uploads yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
+<div class="small text-muted mt-2" style="max-width:980px">Unmatched names are export customers without an account in the app — they are listed per upload on the Import reports screen. Balances for those stay outside the credit engine until the account exists.</div>
+{% endblock %}

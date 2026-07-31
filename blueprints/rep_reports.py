@@ -48,7 +48,7 @@ def _series():
             for c in assigned}
     if ids:
         for i in db.session.scalars(db.select(Invoice).where(
-                Invoice.customer_id.in_(ids), Invoice.currency == "UGX",
+                Invoice.customer_id.in_(ids),
                 Invoice.payment_status != "Reversed", Invoice.invoice_date.isnot(None))):
             idx = i.invoice_date.year * 12 + i.invoice_date.month
             if idx > cutover:

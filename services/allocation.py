@@ -25,6 +25,32 @@ def allowed_pricelists_for(customer):
     return res
 
 
+def combinable_lists(order):
+    """Every pricelist assigned to the order's customer that can price lines
+    on THIS order (22 Jul 2026: one order draws from ALL assigned lists).
+    Compatible means same currency and the same VAT treatment the order was
+    derived with. The order's source list comes first; a product appearing on
+    several lists is priced from the first list carrying it."""
+    from services import order_vat
+    cust = order.customer
+    if cust is None:
+        return [order.source_pricelist] if order.source_pricelist else []
+    src = order.source_pricelist
+    ordered = ([src] if src else []) + [
+        p for p in allowed_pricelists_for(cust) if src is None or p.id != src.id]
+    out = []
+    for p in ordered:
+        if p is None or p.currency != order.currency:
+            continue
+        va, vr = order_vat.derive_vat(p, cust)
+        if bool(va) != bool(order.vat_applicable):
+            continue
+        if va and float(vr or 0) != float(order.vat_rate or 0):
+            continue
+        out.append(p)
+    return out
+
+
 def selectable_customers(user):
     custs = [c for c in db.session.scalars(db.select(Customer).order_by(Customer.name))
              if not c.archived]

@@ -9,7 +9,7 @@
     {% if order.status=='draft' %}<span class="badge bg-secondary">draft</span>
     {% elif order.status=='submitted' %}<span class="badge" style="background:#ED1C24">submitted by customer</span>
     {% elif order.status=='placed' %}<span class="badge bg-dark">placed</span>
-    {% elif order.status=='in_fulfillment' %}<span class="badge" style="background:#F47A21">in fulfilment</span>
+    {% elif order.status=='in_fulfillment' %}<span class="badge" style="background:#F47A21">to deliver</span>
     {% elif order.status=='ready_for_dispatch' %}<span class="badge" style="background:#6E7149">ready for dispatch</span>
     {% elif order.status=='out_for_delivery' %}<span class="badge" style="background:#2E7D32">out for delivery</span>
     {% elif order.status in ['dispatched'] %}<span class="badge" style="background:#2E7D32">dispatched</span>
@@ -30,20 +30,32 @@
       {% if order.dnote_number %} · DN {{ order.dnote_number }}{% endif %}
       {% if order.assigned_driver %} · driver {{ order.assigned_driver.full_name }}{{ ' (accepted)' if order.driver_accepted_at }}{% endif %}
       {% if order.delivered_at %} · delivered {{ order.delivered_at.strftime('%d %b %H:%M') }}{% endif %}
+      {% if order.momo_ref %} · <span title="Mobile money payment reference captured at delivery"><i class="bi bi-phone"></i> MoMo ref {{ order.momo_ref }}</span>{% endif %}
       {% if order.pod_filename %} · <a href="{{ url_for('orders.pod', order_id=order.id) }}" target="_blank"><i class="bi bi-card-image"></i> POD</a>{% endif %}
+      {% if order.accepted_recorded_at %} · <span title="Accepted quantities keyed from the signed delivery note by {{ order.accepted_recorded_by.full_name if order.accepted_recorded_by else 'finance' }}">accepted qty recorded{% if order.has_variance %} <span class="badge badge-warn">variance</span>{% endif %}</span>{% endif %}
+      {% if order.dnote_filing_no %} · <span title="Physical signed delivery note filed{{ ' by ' + order.dnote_filed_by.full_name if order.dnote_filed_by else '' }}"><i class="bi bi-archive"></i> filed {{ order.dnote_filing_no }}</span>{% endif %}
     </div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('orders.export', order_id=order.id, fmt='pdf', view=1) }}" target="_blank"><i class="bi bi-eye"></i> View</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('orders.export', order_id=order.id, fmt='pdf') }}"><i class="bi bi-download"></i> PDF</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('orders.export', order_id=order.id, fmt='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> Excel</a>
-    {% if order.status=='draft' %}
+    {% if can_amend and order.status=='draft' and order.source_pricelist %}
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('orders.fill', order_id=order.id) }}"><i class="bi bi-ui-checks-grid"></i> Fill from pricelist</a>
+    {% endif %}
+    {% if can_amend and order.status=='draft' %}
     <form method="post" action="{{ url_for('orders.place', order_id=order.id) }}" onsubmit="return confirm('Place this order? Prices and the exchange rate will be locked.')">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn btn-sm btn-primary"><i class="bi bi-cart-check"></i> Place order</button></form>
     {% endif %}
     {% if is_acceptor and order.status in ['submitted','placed'] %}
       <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#stockModal"><i class="bi bi-clipboard-check"></i> Accept order</button>
+    {% endif %}
+    {% if (can_fulfill or is_acceptor) and order.accepted_at %}
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('orders.picking_slip', order_id=order.id, view=1) }}" target="_blank"><i class="bi bi-card-checklist"></i> Picking slip</a>
+    {% endif %}
+    {% if (can_fulfill or is_acceptor) and order.stock_deducted %}
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('orders.invoice_print', order_id=order.id) }}" target="_blank"><i class="bi bi-receipt"></i> Invoice</a>
     {% endif %}
     {% if can_fulfill %}
       {% if order.status=='in_fulfillment' %}
@@ -65,18 +77,40 @@
     {% if current_user.can_dispatch and order.status in ['ready_for_dispatch','out_for_delivery'] %}
     <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#assignModal"><i class="bi bi-person-badge"></i> {{ 'Re-assign driver' if order.assigned_driver else 'Assign driver' }}</button>
     {% endif %}
-    {% if is_acceptor and order.has_outstanding and not order.backorder and order.status in ['in_fulfillment','pending','ready_for_dispatch','out_for_delivery','delivered'] %}
+    {% if is_acceptor and order.customer.backorders_allowed and order.has_outstanding and not order.backorder and order.status in ['in_fulfillment','pending','ready_for_dispatch','out_for_delivery','delivered'] %}
     <form method="post" action="{{ url_for('orders.create_backorder', order_id=order.id) }}" onsubmit="return confirm('Create a back order for the undelivered balance?')">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn btn-sm btn-outline-primary"><i class="bi bi-arrow-repeat"></i> Create back order</button></form>
     {% endif %}
-    {% if order.status in ['draft','placed','in_fulfillment','pending'] %}
+    {% if can_amend and order.status in ['draft','placed','in_fulfillment','pending'] %}
     <form method="post" action="{{ url_for('orders.cancel', order_id=order.id) }}" onsubmit="return confirm('Cancel this order?')">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-circle"></i> Cancel</button></form>
     {% endif %}
   </div>
 </div>
+
+{% set want_print = request.args.get('print') %}
+{% if want_print == 'pickslip' and (can_fulfill or is_acceptor) %}
+<div class="alert alert-info d-flex align-items-center justify-content-between flex-wrap gap-2 py-2">
+  <span><i class="bi bi-printer"></i> <strong>Order accepted.</strong> Print the picking slip for the store — the picker fills the Picked column, the checker fills Verified.</span>
+  <a class="btn btn-sm btn-primary" target="_blank" href="{{ url_for('orders.picking_slip', order_id=order.id, view=1) }}"><i class="bi bi-printer"></i> Print picking slip</a>
+</div>
+{% elif want_print == 'pack' and (can_fulfill or is_acceptor) %}
+<div class="alert alert-info d-flex align-items-center justify-content-between flex-wrap gap-2 py-2">
+  <span><i class="bi bi-printer"></i> <strong>Fulfilment complete.</strong> Print the delivery note for the driver and the invoice for the customer.</span>
+  <span class="d-flex gap-2">
+    <a class="btn btn-sm btn-primary" target="_blank" href="{{ url_for('orders.delivery_note', order_id=order.id, view=1) }}"><i class="bi bi-truck"></i> Print delivery note</a>
+    <a class="btn btn-sm btn-outline-primary" target="_blank" href="{{ url_for('orders.invoice_print', order_id=order.id) }}"><i class="bi bi-receipt"></i> Print invoice</a>
+  </span>
+</div>
+{% elif want_print == 'dnote' and (can_fulfill or is_acceptor) %}
+<div class="alert alert-info d-flex align-items-center justify-content-between flex-wrap gap-2 py-2">
+  <span><i class="bi bi-printer"></i> <strong>Fulfilment complete.</strong> Print the delivery note — two copies with the driver. No invoice yet:
+    the invoicing clerk bills the quantities the customer accepts on the signed note, after delivery.</span>
+  <a class="btn btn-sm btn-primary" target="_blank" href="{{ url_for('orders.delivery_note', order_id=order.id, view=1) }}"><i class="bi bi-truck"></i> Print delivery note</a>
+</div>
+{% endif %}
 
 {% set dur = order_durations(order) %}
 {% set delayed, reason = order_delay(order) %}
@@ -88,7 +122,7 @@
   <div class="row text-center g-2">
     <div class="col"><div class="lbl small text-muted">Elapsed (open)</div><div class="fw-semibold">{{ humanize_hours(dur.elapsed) if dur.elapsed is not none else '—' }}</div></div>
     <div class="col"><div class="lbl small text-muted">Placed → dispatch</div><div class="fw-semibold">{{ humanize_hours(dur.to_dispatch) }}</div></div>
-    <div class="col"><div class="lbl small text-muted">Dispatch → delivered</div><div class="fw-semibold">{{ humanize_hours(dur.dispatch_to_deliver) }}</div></div>
+    <div class="col"><div class="lbl small text-muted">Dispatch → delivery</div><div class="fw-semibold">{{ humanize_hours(dur.dispatch_to_deliver) }}</div></div>
     <div class="col"><div class="lbl small text-muted">Total cycle</div><div class="fw-semibold text-rf-orange">{{ humanize_hours(dur.to_deliver) }}</div></div>
   </div>
 </div>
@@ -141,11 +175,17 @@
     <div class="rf-card p-0">
       <div class="table-responsive">
       <table class="table table-sm align-middle mb-0">
-        {% set show_stock = order.status in ['placed','in_fulfillment','pending','dispatched','fulfilled'] %}
+        {# Acceptors see the stock column (with on-hand quantities) as soon as
+           the order arrives, so acceptance is decided against real stock. #}
+        {% set show_onhand = (is_acceptor or can_fulfill) and order.status in ['submitted','placed','in_fulfillment','pending'] %}
+        {% set show_stock = order.status in ['placed','in_fulfillment','pending','dispatched','fulfilled'] or show_onhand %}
         {% set can_fill_qty = can_fulfill and order.status in ['placed','in_fulfillment','pending'] %}
-        {% set show_delivered = order.status in ['in_fulfillment','pending','dispatched','fulfilled'] or can_fill_qty %}
+        {% set show_delivered = order.status in ['in_fulfillment','pending','ready_for_dispatch','out_for_delivery','dispatched','fulfilled','delivered'] or can_fill_qty %}
         {% set kg = ' (kg)' if (order.source_pricelist and order.source_pricelist.price_basis == 'kg') else '' %}
-        <thead><tr><th>Art</th><th>Description</th><th>Pack size</th><th class="text-end">Ordered{{ kg }}</th>{% if show_delivered %}<th class="text-end">Delivered{{ kg }}</th>{% endif %}<th class="text-end">Unit</th><th class="text-end">Disc%</th><th class="text-end">Total</th>{% if show_stock %}<th>Stock</th>{% endif %}{% if order.is_amendable %}<th></th>{% endif %}</tr></thead>
+        {# Quantity column: "Fulfilled" through picking and dispatch (Stephan's
+           call, 21 Jul 2026), "Delivered" only after the driver's POD. #}
+        {% set del_label = 'Delivered' if order.status == 'delivered' else 'Fulfilled' %}
+        <thead><tr><th>Art</th><th>Description</th><th>Pack size</th><th class="text-end">Ordered{{ kg }}</th>{% if show_delivered %}<th class="text-end">{{ del_label }}{{ kg }}</th>{% endif %}<th class="text-end">Unit</th><th class="text-end">Disc%</th><th class="text-end">Total</th>{% if show_stock %}<th>Stock</th>{% endif %}{% if (order.is_lines_amendable and can_amend) %}<th></th>{% endif %}</tr></thead>
         <tbody>
         {% for l in order.lines %}
           <tr>
@@ -153,7 +193,7 @@
             <td>{{ l.description }}{% if l.is_fixed %} <span class="badge badge-fixed">fixed</span>{% endif %}{% if order.vat_applicable and l.is_vatable %} <span class="badge bg-secondary" title="VAT charged on this item">VAT</span>{% endif %}</td>
             <td class="small">{{ l.pack_size }}</td>
             <td class="text-end">
-              {% if order.is_amendable %}
+              {% if (order.is_lines_amendable and can_amend) %}
               <form method="post" action="{{ url_for('orders.update_line_qty', order_id=order.id, line_id=l.id) }}" class="d-flex justify-content-end gap-1">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="number" step="any" min="0" name="quantity" value="{{ l.quantity }}" class="form-control form-control-sm text-end" style="width:78px">
@@ -163,11 +203,15 @@
             </td>
             {% if show_delivered %}
             <td class="text-end">
+              {% set uom = l.product.unit_of_measure if l.product else '' %}
               {% if can_fill_qty %}
+                {% set soh_cap = l.product.stock_on_hand if l.product else None %}
                 <input type="number" step="any" min="0" name="qty_{{ l.id }}" form="qtyForm"
                        value="{{ l.delivered_qty }}" class="form-control form-control-sm text-end"
+                       {% if soh_cap is not none %}max="{{ [l.quantity or 0, soh_cap]|min }}"{% endif %}
                        style="width:78px; display:inline-block">
-              {% else %}{{ l.delivered_qty }}{% endif %}
+                {% if uom %}<span class="small text-muted">{{ uom }}</span>{% endif %}
+              {% else %}{{ l.delivered_qty }}{% if uom %} <span class="small text-muted">{{ uom }}</span>{% endif %}{% endif %}
             </td>
             {% endif %}
             <td class="text-end money">{{ l.unit_price|money(order.currency) }}</td>
@@ -180,7 +224,13 @@
                 {% if l.customer_notified_at %}<span class="small text-success d-block" title="Customer notified {{ l.customer_notified_at.strftime('%d %b %H:%M') }}"><i class="bi bi-check2"></i> customer told</span>{% endif %}
               {% elif l.availability=='not_delivered' %}<span class="badge badge-danger">not delivered</span>
               {% else %}<span class="badge badge-ok">available</span>{% endif %}
-              {% if can_fulfill and order.status in ['placed','in_fulfillment','pending'] %}
+              {% if show_onhand %}
+                {% set soh = l.product.stock_on_hand if l.product else None %}
+                {% if soh is not none %}
+                <span class="small d-block {{ 'text-danger fw-semibold' if soh < (l.quantity or 0) else 'text-muted' }}">on hand: {{ '%g'|format(soh) }}{{ ' ' ~ l.product.unit_of_measure if l.product and l.product.unit_of_measure else '' }}{% if soh < (l.quantity or 0) %} · short{% endif %}</span>
+                {% else %}<span class="small text-muted d-block">on hand: —</span>{% endif %}
+              {% endif %}
+              {% if can_fulfill and order.status in ['in_fulfillment','pending'] %}
               <form method="post" action="{{ url_for('orders.set_availability', order_id=order.id, line_id=l.id) }}" class="d-inline">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% if l.availability=='out_of_stock' %}
@@ -194,7 +244,7 @@
               {% endif %}
             </td>
             {% endif %}
-            {% if order.is_amendable %}
+            {% if (order.is_lines_amendable and can_amend) %}
             <td class="text-end"><form method="post" action="{{ url_for('orders.remove_line', order_id=order.id, line_id=l.id) }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger py-0 px-1"><i class="bi bi-trash"></i></button></form></td>
             {% endif %}
@@ -203,9 +253,9 @@
         </tbody>
         <tfoot>
           {% set cspan = 6 if show_delivered else 5 %}
-          <tr><td colspan="{{ cspan }}"></td><td class="text-end">Subtotal</td><td class="text-end money">{{ order.subtotal|money(order.currency) }}</td>{% if show_stock %}<td></td>{% endif %}{% if order.is_amendable %}<td></td>{% endif %}</tr>
-          <tr><td colspan="{{ cspan }}"></td><td class="text-end small">{{ 'VAT '~(order.vat_rate|int)~'% (VAT items only)' if order.vat_applicable else 'VAT' }}</td><td class="text-end money">{{ order.vat_amount|money(order.currency) if order.vat_applicable else 'Zero-rated' }}</td>{% if show_stock %}<td></td>{% endif %}{% if order.is_amendable %}<td></td>{% endif %}</tr>
-          <tr class="fw-bold"><td colspan="{{ cspan }}"></td><td class="text-end">TOTAL{% if show_delivered %} (delivered){% endif %}</td><td class="text-end money text-rf-orange">{{ order.total|money(order.currency) }}</td>{% if show_stock %}<td></td>{% endif %}{% if order.is_amendable %}<td></td>{% endif %}</tr>
+          <tr><td colspan="{{ cspan }}"></td><td class="text-end">Subtotal</td><td class="text-end money">{{ order.subtotal|money(order.currency) }}</td>{% if show_stock %}<td></td>{% endif %}{% if (order.is_lines_amendable and can_amend) %}<td></td>{% endif %}</tr>
+          <tr><td colspan="{{ cspan }}"></td><td class="text-end small">{{ 'VAT '~(order.vat_rate|int)~'% (VAT items only)' if order.vat_applicable else 'VAT' }}</td><td class="text-end money">{{ order.vat_amount|money(order.currency) if order.vat_applicable else 'Zero-rated' }}</td>{% if show_stock %}<td></td>{% endif %}{% if (order.is_lines_amendable and can_amend) %}<td></td>{% endif %}</tr>
+          <tr class="fw-bold"><td colspan="{{ cspan }}"></td><td class="text-end">TOTAL{% if show_delivered %} ({{ del_label|lower }}){% endif %}</td><td class="text-end money text-rf-orange">{{ order.total|money(order.currency) }}</td>{% if show_stock %}<td></td>{% endif %}{% if (order.is_lines_amendable and can_amend) %}<td></td>{% endif %}</tr>
         </tfoot>
       </table>
       </div>
@@ -213,7 +263,7 @@
       <form id="qtyForm" method="post" action="{{ url_for('orders.save_fulfilled', order_id=order.id) }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
       <div class="p-2 text-end border-top">
-        <span class="small text-muted me-2">Adjust the Delivered column to what actually shipped, then</span>
+        <span class="small text-muted me-2">Adjust the Fulfilled column to what is actually going out, then</span>
         <button class="btn btn-sm btn-outline-primary" form="qtyForm"><i class="bi bi-save"></i> Save delivered quantities</button>
       </div>
       {% endif %}
@@ -221,7 +271,7 @@
   </div>
 
   <div class="col-lg-4">
-    {% if order.is_amendable %}
+    {% if (order.is_lines_amendable and can_amend) %}
     <div class="rf-card p-3 mb-3">
       <h2 class="h6">Add a line</h2>
       <input class="form-control form-control-sm mb-2" id="prodSearch" placeholder="Search article no / description" autocomplete="off">
@@ -316,12 +366,44 @@ function lpoPicked(inp){
         {% elif order.customer.account_status == 'on_hold' %}
         <div class="alert alert-warning py-2"><i class="bi bi-exclamation-triangle"></i> Account on hold{% if order.customer.account_note %} — {{ order.customer.account_note }}{% endif %}.</div>
         {% endif %}
-        <div class="rf-card p-2 mb-2" style="background:#fbf2e7">
-          <div class="form-check">
-            <input class="form-check-input" type="checkbox" name="credit_checked" value="1" id="creditChk">
-            <label class="form-check-label" for="creditChk"><strong>I checked the customer's account</strong> (credit not exceeded, no overdue payments). Terms: {{ order.payment_terms or '—' }}</label>
-          </div>
+        {% set cust = order.customer %}
+        {% if cust.account_status != 'blocked' and cust.credit_cleared %}
+        <div class="rf-card p-2 mb-2" style="background:#eef7ee">
+          <i class="bi bi-shield-check text-success"></i>
+          <strong>Finance credit clearance: OK</strong> —
+          cleared by {{ cust.credit_cleared_by.full_name if cust.credit_cleared_by else 'finance' }}{% if cust.credit_cleared_at %} on {{ cust.credit_cleared_at.strftime('%d %b %Y') }}{% endif %}.
+          Terms: {{ order.payment_terms or '—' }}
         </div>
+        {% else %}
+        <div class="alert alert-danger py-2 mb-2">
+          <i class="bi bi-shield-x"></i>
+          <strong>No finance credit clearance</strong>{% if cust.account_status == 'blocked' %} — account BLOCKED{% endif %}.
+          Accepting is not possible; proceeding sends an alert to the CFO / finance manager, who decide in the Credit alerts queue.
+        </div>
+        {% endif %}
+        {% if credit_info %}
+          {% if credit_info.released %}
+          <div class="rf-card p-2 mb-2" style="background:#eef7ee"><i class="bi bi-unlock text-success"></i>
+            <strong>Released past the credit limit</strong> by finance — this order may be accepted.</div>
+          {% elif credit_info.over %}
+          <div class="alert alert-danger py-2 mb-2"><i class="bi bi-speedometer"></i>
+            <strong>Insufficient credit.</strong> Outstanding UGX {{ '{:,}'.format(credit_info.out) }},
+            limit UGX {{ '{:,}'.format(credit_info.limit) }}, this order UGX {{ '{:,}'.format(credit_info.total) }}.
+            Accepting is not possible; only the CEO / CFO / finance manager release the order from the Credit alerts queue.</div>
+          {% elif credit_info.overdue %}
+          <div class="alert alert-danger py-2 mb-2"><i class="bi bi-calendar-x"></i>
+            <strong>Overdue invoices.</strong> Oldest unpaid invoice is {{ credit_info.age }} days old,
+            past the {{ credit_info.days }}-day credit limit.
+            Accepting is not possible; only the CEO / CFO / finance manager release the order from the Credit alerts queue.</div>
+          {% else %}
+          <div class="rf-card p-2 mb-2" style="background:#eef7ee"><i class="bi bi-speedometer text-success"></i>
+            <strong>Credit OK</strong> —
+            {% if credit_info.limit %}outstanding UGX {{ '{:,}'.format(credit_info.out) }}
+            + this order UGX {{ '{:,}'.format(credit_info.total) }} stays within the
+            UGX {{ '{:,}'.format(credit_info.limit) }} limit{% endif %}{% if credit_info.limit and credit_info.days %}; {% endif %}{% if credit_info.days %}oldest unpaid
+            {{ credit_info.age if credit_info.age is not none else '—' }} days, within the {{ credit_info.days }}-day limit{% endif %}.</div>
+          {% endif %}
+        {% endif %}
         <p class="small text-muted">Tick any item that is out of stock and, if you know it, when it is expected back. In-stock items are accepted and go into fulfilment when you proceed.</p>
         <div class="table-responsive">
         <table class="table table-sm align-middle">
@@ -360,6 +442,7 @@ function lpoPicked(inp){
                   placeholder="e.g. We can substitute a similar cut if you prefer — let us know."></textarea>
         <div class="form-text">The message lands in the customer's portal Messages. Expected-back dates are included automatically.</div>
         <hr>
+{% if order.customer.backorders_allowed %}
         <label class="form-label small mb-1">For out-of-stock items, the back order should be:</label>
         <div class="form-check"><input class="form-check-input" type="radio" name="oos_action" value="none" id="boNone" checked>
           <label class="form-check-label" for="boNone">Not created now (decide later)</label></div>
@@ -367,6 +450,9 @@ function lpoPicked(inp){
           <label class="form-check-label" for="boNow">Created now (live back order)</label></div>
         <div class="form-check"><input class="form-check-input" type="radio" name="oos_action" value="ask_customer" id="boAsk">
           <label class="form-check-label" for="boAsk">Proposed to the customer to confirm or decline in their portal</label></div>
+        {% else %}
+        <p class="small text-muted mb-0"><i class="bi bi-slash-circle"></i> This customer does not accept back orders (customer profile) — none will be created for out-of-stock items.</p>
+        {% endif %}
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-link" data-bs-dismiss="modal">Cancel</button>
@@ -411,12 +497,10 @@ function lpoPicked(inp){
       <div class="modal-body">
         {% if order.has_shortfall_now %}
           <p>This order is <strong>not fully delivered</strong> (some items are short or were found out of stock during picking). Out-of-stock items are recorded as <em>not delivered</em>.</p>
-          <p class="small mb-2"><i class="bi bi-arrow-repeat text-rf-orange"></i> A <strong>back order</strong> will be created automatically for the undelivered balance.</p>
-          {% if not order.backorder %}
-          <div class="form-check">
-            <input class="form-check-input" type="checkbox" name="no_backorder" value="1" id="noBo">
-            <label class="form-check-label small text-muted" for="noBo">Do not create a back order this time</label>
-          </div>
+          {% if order.customer.backorders_allowed %}
+          <p class="small mb-2"><i class="bi bi-arrow-repeat text-rf-orange"></i> A <strong>back order</strong> is created automatically for the undelivered balance (allowed on the customer profile).</p>
+          {% else %}
+          <p class="small mb-2"><i class="bi bi-slash-circle"></i> <strong>No back order</strong> — this customer does not accept back orders (customer profile). The undelivered balance is dropped.</p>
           {% endif %}
         {% else %}
           <p>Everything is set to be delivered in full. Complete this order?</p>
@@ -432,7 +516,7 @@ function lpoPicked(inp){
 {% endif %}
 {% endblock %}
 {% block scripts %}
-{% if order.is_amendable %}
+{% if order.is_amendable and can_amend %}
 <script>
 const searchUrl = "{{ url_for('orders.search_products', order_id=order.id) }}";
 const box=document.getElementById('prodSearch'), results=document.getElementById('results');
