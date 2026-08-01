@@ -400,6 +400,7 @@ def _run_migrations():
                 if "fulfilment_started_at" not in ocols2:
                     conn.execute(text("ALTER TABLE sales_order ADD COLUMN fulfilment_started_at DATETIME"))
                 for col, ddl in [
+                    ("delivery_time", "delivery_time VARCHAR(8)"),
                     ("accepted_at", "accepted_at DATETIME"),
                     ("accepted_by_id", "accepted_by_id INTEGER"),
                     ("credit_checked", "credit_checked BOOLEAN DEFAULT 0"),
@@ -485,30 +486,44 @@ def _run_migrations():
                                       "ON prod_production (lot_number)"))
                 if "expiry" not in ppc:
                     conn.execute(text("ALTER TABLE prod_production ADD COLUMN expiry DATE"))
-            # Invoice-after-delivery flow (31 Jul 2026): accepted quantities,
-            # delivery variance and the physical delivery-note filing trail.
-            if "sales_order_line" in insp.get_table_names():
-                sol = {c["name"] for c in insp.get_columns("sales_order_line")}
-                if "accepted_qty" not in sol:
-                    conn.execute(text("ALTER TABLE sales_order_line ADD COLUMN accepted_qty FLOAT"))
-                if "variance_reason" not in sol:
-                    conn.execute(text("ALTER TABLE sales_order_line ADD COLUMN variance_reason VARCHAR(24)"))
-            if "sales_order" in insp.get_table_names():
-                so31 = {c["name"] for c in insp.get_columns("sales_order")}
-                if "accepted_recorded_at" not in so31:
-                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN accepted_recorded_at DATETIME"))
-                if "accepted_recorded_by_id" not in so31:
-                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN accepted_recorded_by_id INTEGER"))
-                if "dnote_filing_no" not in so31:
-                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN dnote_filing_no VARCHAR(20)"))
-                    conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_sales_order_dnote_filing_no "
-                                      "ON sales_order (dnote_filing_no)"))
-                if "dnote_filed_at" not in so31:
-                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN dnote_filed_at DATETIME"))
-                if "dnote_filed_by_id" not in so31:
-                    conn.execute(text("ALTER TABLE sales_order ADD COLUMN dnote_filed_by_id INTEGER"))
     _cleanup_orphan_user_refs()
     _cleanup_datekey_payments()
+    _fix_fx_invoice_lines()
+
+
+def _fix_fx_invoice_lines():
+    """One-time repair (1 Aug 2026, found via SEULE LA GRACE): the itemized
+    Odoo export carries line amounts in DOCUMENT currency, so USD export
+    invoices imported before the importer converted them hold dollar lines
+    under shilling headers. Detect by ratio: header untaxed / line sum
+    between 100 and 10,000 is an fx factor (UGX/USD runs ~3,500-3,900);
+    genuine invoices sit near 1. Scale each affected invoice's lines by the
+    exact ratio so lines sum back to the UGX header. Idempotent: once
+    scaled, the ratio is 1 and no boot touches them again."""
+    from sqlalchemy import text
+    try:
+        cands = db.session.execute(text(
+            "SELECT i.id, i.untaxed * 1.0 / SUM(l.amount) AS f "
+            "FROM invoice i JOIN invoice_line l ON l.invoice_id = i.id "
+            "WHERE i.untaxed IS NOT NULL AND i.untaxed > 0 "
+            "GROUP BY i.id, i.untaxed "
+            "HAVING SUM(l.amount) > 0 "
+            "AND i.untaxed * 1.0 / SUM(l.amount) BETWEEN 100 AND 10000")).all()
+        if not cands:
+            return
+        with db.engine.begin() as conn:
+            for iid, f in cands:
+                conn.execute(text(
+                    "UPDATE invoice_line SET amount = amount * :f "
+                    "WHERE invoice_id = :iid"), {"f": float(f), "iid": iid})
+        from flask import current_app
+        current_app.logger.warning(
+            "Converted document-currency invoice lines to UGX on %s invoices",
+            len(cands))
+    except Exception:
+        from flask import current_app
+        current_app.logger.exception(
+            "FX invoice-line repair skipped (will retry next boot)")
 
 
 def _cleanup_datekey_payments():
@@ -599,7 +614,6 @@ def register_blueprints(app):
     from blueprints.price_promos import bp as price_promos_bp
     from blueprints.production import bp as production_bp
     from blueprints.accounting import bp as accounting_bp
-    from blueprints.invoicing import bp as invoicing_bp
     from blueprints.api import bp as api_bp
     # Costing module (ported from the standalone meat-costing-app).
     from blueprints.summary import summary_bp
@@ -638,7 +652,6 @@ def register_blueprints(app):
     app.register_blueprint(price_promos_bp)
     app.register_blueprint(production_bp)
     app.register_blueprint(accounting_bp)
-    app.register_blueprint(invoicing_bp)
     for costing_bp in (summary_bp, ingredients_bp, cuts_bp, spice_bp,
                        recipes_bp, pricing_bp, overhead_bp, packaging_bp,
                        whatif_bp, settings_bp):
@@ -671,8 +684,6 @@ def register_template_helpers(app):
             "pending_onboarding": 0,
             "credit_alerts_open": 0,
             "driver_new": 0,
-            "inv_queue_open": 0,
-            "dn_filing_open": 0,
             "portal_outlets": [],
             "portal_active_id": None,
         }
@@ -725,15 +736,6 @@ def register_template_helpers(app):
                     ctx["credit_alerts_open"] = db.session.scalar(
                         db.select(db.func.count(_CA.id)).where(
                             _CA.status == "open")) or 0
-                # Invoice-after-delivery badges (31 Jul 2026): the clerk's two
-                # queues — signed notes to invoice, paper to file.
-                if (current_user.is_finance or current_user.role in
-                        ("admin", "ceo", "manager")):
-                    from services.features import feature_on as _fon
-                    if _fon("invoice_after_delivery"):
-                        from blueprints import invoicing as _invq
-                        ctx["inv_queue_open"] = _invq.queue_count()
-                        ctx["dn_filing_open"] = _invq.filing_count()
         except Exception:
             # Badge counts are non-critical; log the failure but still render
             # the page with safe zero defaults set above.

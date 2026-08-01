@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block heading %}{{ rep.full_name }}{% endblock %}
+{% macro ugx(v) %}UGX {{ '{:,.0f}'.format(v or 0) }}{% endmacro %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <ul class="nav nav-tabs">
+    <li class="nav-item"><a class="nav-link active">Performance</a></li>
+    <li class="nav-item"><a class="nav-link" href="{{ url_for('targets.rep', rep_id=rep.id, ym=ym) }}">Set targets</a></li>
+    <li class="nav-item"><a class="nav-link" href="{{ url_for('reps.detail', user_id=rep.id) }}">Assign customers</a></li>
+  </ul>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('targets.index') }}">All reps</a>
+</div>
+
+<!-- Performance tiles -->
+<div class="row g-3 mb-3">
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Last 30 days</div>
+      <div class="h5 mb-0" style="color:#F47A21">{{ '{:,.0f}'.format(kg30) }} kg</div>
+      <div class="small text-muted">{{ ugx(tot30) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Last 90 days</div>
+      <div class="h5 mb-0" style="color:#6E7149">{{ '{:,.0f}'.format(kg90) }} kg</div>
+      <div class="small text-muted">{{ ugx(tot90) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Last 12 months</div>
+      <div class="h5 mb-0" style="color:#2B2B2B">{{ '{:,.0f}'.format(kg365) }} kg</div>
+      <div class="small text-muted">{{ ugx(tot365) }} · {{ n_customers }} customers</div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">{{ label }} vs target</div>
+      {% if target_total %}
+        <div class="h6 mb-1">{{ ugx(target_actual) }} <span class="text-muted small fw-normal">of {{ ugx(target_total) }}</span></div>
+        {% set p = target_pct|round|int %}
+        <div class="progress" style="height:18px">
+          <div class="progress-bar {{ 'bg-success' if p>=100 else ('bg-warning text-dark' if p>=60 else 'bg-danger') }}"
+               style="width:{{ 100 if p>100 else p }}%">{{ p }}%</div>
+        </div>
+      {% else %}
+        <div class="h6 mb-1">{{ ugx(target_actual) }}</div>
+        <div class="small text-muted">no target set — <a href="{{ url_for('targets.rep', rep_id=rep.id, ym=ym) }}">set one</a></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Trend -->
+<div class="rf-card p-3 mb-3">
+  <h2 class="h6"><i class="bi bi-graph-up-arrow text-rf-orange"></i> Monthly volume <span class="text-muted small fw-normal">(last 12 months · kilograms)</span></h2>
+  <canvas id="trendChart" height="70"></canvas>
+</div>
+
+{% if cust_targets %}
+<!-- Per-customer target attainment -->
+<div class="rf-card p-3 mb-3">
+  <h2 class="h6"><i class="bi bi-bullseye text-rf-orange"></i> Customer targets — {{ label }}</h2>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Customer</th><th class="text-end">Target</th><th class="text-end">Month to date</th><th style="width:200px">Attainment</th></tr></thead>
+    <tbody>
+    {% for r in cust_targets %}
+      <tr><td class="small fw-semibold"><a href="{{ url_for('customers.detail', customer_id=r.cid) }}" class="text-decoration-none">{{ r.name }}</a></td>
+        <td class="text-end">{{ ugx(r.target) }}</td>
+        <td class="text-end">{{ ugx(r.actual) }}</td>
+        <td>{% if r.pct is not none %}{% set p = r.pct|round|int %}
+          <div class="progress" style="height:16px">
+            <div class="progress-bar {{ 'bg-success' if p>=100 else ('bg-warning text-dark' if p>=60 else 'bg-danger') }}"
+                 style="width:{{ 100 if p>100 else p }}%">{{ p }}%</div>
+          </div>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endif %}
+
+<!-- Customers ranked -->
+<div class="rf-card p-3">
+  <h2 class="h6"><i class="bi bi-people text-rf-orange"></i> Customers <span class="text-muted small fw-normal">(ranked by 12-month kilograms)</span></h2>
+  <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0">
+    <thead><tr><th></th><th>Customer</th><th class="text-end">Last 30 days</th>
+      <th class="text-end">Last 90 days</th><th class="text-end">Last 12 months</th>
+      <th class="text-end">Last purchase</th></tr></thead>
+    <tbody>
+    {% for r in cust_rows %}
+      <tr>
+        <td class="small text-muted">{{ loop.index }}</td>
+        <td class="fw-semibold small"><a href="{{ url_for('customers.detail', customer_id=r.customer.id) }}" class="text-decoration-none">{{ r.customer.name }}</a></td>
+        <td class="text-end"><span class="fw-semibold">{{ '{:,.0f}'.format(r.kg30) }} kg</span><div class="small text-muted money">{{ ugx(r.d30) }}</div></td>
+        <td class="text-end"><span class="fw-semibold">{{ '{:,.0f}'.format(r.kg90) }} kg</span><div class="small text-muted money">{{ ugx(r.d90) }}</div></td>
+        <td class="text-end"><span class="fw-semibold">{{ '{:,.0f}'.format(r.kgy1) }} kg</span><div class="small text-muted money">{{ ugx(r.y1) }}</div></td>
+        <td class="text-end small {{ 'text-danger' if r.last and (today - r.last).days > 42 else 'text-muted' }}">
+          {{ r.last.strftime('%d %b %Y') if r.last else 'never' }}</td>
+      </tr>
+    {% else %}<tr><td colspan="6" class="text-muted small">No customers assigned to this rep yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<!-- Products sold -->
+<div class="rf-card p-3 mt-3">
+  <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> Products sold <span class="text-muted small fw-normal">(ranked by 12-month kilograms)</span></h2>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr><th></th><th>Product</th>
+      <th class="text-end">Last 30 days</th><th class="text-end">Last 90 days</th>
+      <th class="text-end">Last 12 months</th></tr></thead>
+    <tbody>
+    {% for r in prod_rows %}
+      <tr>
+        <td class="small text-muted">{{ loop.index }}</td>
+        <td class="fw-semibold small">{{ r.name }}</td>
+        <td class="text-end"><span class="fw-semibold">{{ '{:,.0f}'.format(r.kg30) }} kg</span><div class="small text-muted money">{{ ugx(r.d30) }}</div></td>
+        <td class="text-end"><span class="fw-semibold">{{ '{:,.0f}'.format(r.kg90) }} kg</span><div class="small text-muted money">{{ ugx(r.d90) }}</div></td>
+        <td class="text-end"><span class="fw-semibold">{{ '{:,.0f}'.format(r.kgy1) }} kg</span><div class="small text-muted money">{{ ugx(r.y1) }}</div></td>
+      </tr>
+    {% else %}<tr><td colspan="5" class="text-muted small">No product-level sales recorded for this rep's customers yet.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% if prod_more %}<div class="small text-muted mt-1">{{ prod_more }} more products with smaller volumes not shown.</div>{% endif %}
+  {% if approx_kg %}<div class="small text-muted mt-1">Some products have no pack weight on file; their quantities count 1 unit = 1 kg.</div>{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+(function(){
+  const ctx = document.getElementById('trendChart');
+  if (!ctx) return;
+  const vals = {{ trend_kg|tojson }};
+  const ugxVals = {{ trend_values|tojson }};
+  new Chart(ctx, {
+    type: 'bar',
+    data: { labels: {{ trend_labels|tojson }},
+      datasets: [{ data: vals, borderRadius: 4,
+        backgroundColor: vals.map((_,i)=> i===vals.length-1 ? '#F47A21' : '#e7d9c6') }] },
+    options: { plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => Number(c.parsed.y).toLocaleString() + ' kg  (UGX ' + Number(ugxVals[c.dataIndex]).toLocaleString() + ')' } } },
+      scales: { y: { ticks: { callback: v => Number(v).toLocaleString() + ' kg' } } } }
+  });
+})();
+</script>
+{% endblock %}

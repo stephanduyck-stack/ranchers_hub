@@ -278,9 +278,9 @@ def import_itemized(path):
     i_prod = col("Invoice lines/Product", required=True)
     i_qty = col("Invoice lines/Quantity")
     i_amt = col("Invoice lines/Amount in Currency")
-    i_total = col("Total Signed")
-    if i_total is None:
-        i_total = col("Total in Currency Signed")
+    i_ts = col("Total Signed")                    # company currency (UGX)
+    i_tc = col("Total in Currency Signed")        # document currency (e.g. USD)
+    i_total = i_ts if i_ts is not None else i_tc
     i_untaxed = col("Untaxed Amount Signed")
     i_status = col("Payment Status")
     i_sales = col("Salesperson")
@@ -299,6 +299,7 @@ def import_itemized(path):
     statused = set()               # invoice ids whose status came from the file
     dated = 0
     cur = None                     # current Invoice object
+    cur_rate = 1.0                 # document-currency -> UGX for cur's lines
     pending = []                   # lines for cur
     replaced = set()               # invoice ids whose lines were cleared this run
 
@@ -318,7 +319,12 @@ def import_itemized(path):
             db.session.add(InvoiceLine(
                 invoice_id=cur.id, product_name=prod, product_id=pid,
                 quantity=float(qty) if qty is not None else None,
-                amount=-(_num(amt) or 0)))       # journal-signed -> net positive
+                # journal-signed -> net positive, converted to UGX: line
+                # amounts come in DOCUMENT currency (USD for export
+                # invoices), so they are scaled by Total Signed / Total in
+                # Currency Signed (1 for UGX invoices). Found via SEULE LA
+                # GRACE, 1 Aug 2026.
+                amount=-(_num(amt) or 0) * cur_rate))
             n_lines += 1
         pending = []
 
@@ -363,6 +369,10 @@ def import_itemized(path):
                 inv.salesperson = _re.sub(r"\s*\(.*?\)\s*$", "",
                                           sales.strip()) or None
             cur = inv
+            # Document-currency -> UGX rate for this invoice's lines.
+            ts = _num(cell(r, i_ts))
+            tc = _num(cell(r, i_tc))
+            cur_rate = (ts / tc) if (ts and tc) else 1.0
             touched += 1
             if prod is not None:
                 pending.append((str(prod).strip(), cell(r, i_qty), cell(r, i_amt)))

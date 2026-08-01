@@ -29,8 +29,11 @@
           <option value="local">Local (VAT 18%)</option>
           <option value="export">Export (zero-rated)</option>
         </select></div>
-      <div class="col-md-4 mb-3"><label class="form-label">Requested delivery date</label>
-        <input class="form-control" type="date" name="delivery_date"></div>
+      <div class="col-md-4 mb-3"><label class="form-label">Requested delivery date &amp; time</label>
+        <div class="d-flex gap-2">
+          <input class="form-control" type="date" name="delivery_date">
+          <input class="form-control" type="time" name="delivery_time" style="max-width:130px">
+        </div></div>
     </div>
 
     <h2 class="h6 mt-2">Order details</h2>

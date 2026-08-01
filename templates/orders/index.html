@@ -60,7 +60,7 @@
       </td>
       <td class="text-end money">{{ o.total|money(o.currency) }}</td>
       <td class="small">{{ o.order_date }}</td>
-      <td class="small">{{ o.delivery_date or '—' }}</td>
+      <td class="small">{{ o.delivery_date or '—' }}{% if o.delivery_time %}<div class="text-muted">{{ o.delivery_time }}</div>{% endif %}</td>
       <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('orders.export', order_id=o.id, fmt='pdf') }}"><i class="bi bi-file-earmark-pdf"></i></a></td>
     </tr>
   {% else %}

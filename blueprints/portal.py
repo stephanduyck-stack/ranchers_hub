@@ -405,6 +405,7 @@ def save(order_id):
             flash("Enter a quantity for at least one item before submitting.", "warning")
             return redirect(url_for("portal.order", order_id=o.id))
         o.delivery_date = _parse_date(request.form.get("delivery_date"))
+        o.delivery_time = _parse_time(request.form.get("delivery_time"))
         o.delivery_address = request.form.get("delivery_address") or o.customer.notes
         o.customer_po = request.form.get("customer_po")
         o.notes = request.form.get("notes")
@@ -552,6 +553,13 @@ def account():
 def guide():
     """Short operations manual for the portal (also sent in the welcome email)."""
     return render_template("portal/guide.html")
+
+
+def _parse_time(s):
+    """'HH:MM' from a time input; None when blank or unparseable."""
+    import re as _re
+    m = _re.match(r"^([01]?\d|2[0-3]):([0-5]\d)", (s or "").strip())
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else None
 
 
 def _parse_date(s):

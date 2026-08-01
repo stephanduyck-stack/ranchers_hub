@@ -23,7 +23,7 @@
       Customer: <strong>{{ order.customer.name }}</strong>
       · from {{ order.source_pricelist.name if order.source_pricelist else '—' }}
       · ordered {{ order.order_date }}
-      {% if order.delivery_date %} · delivery {{ order.delivery_date }}{% endif %}
+      {% if order.delivery_date %} · delivery {{ order.delivery_date }}{% if order.delivery_time %} {{ order.delivery_time }}{% endif %}{% endif %}
       {% if order.customer_po %} · PO {{ order.customer_po }}{% endif %}
       {% if order.currency=='USD' and order.exchange_rate_value %} · rate UGX {{ '%.0f'|format(order.exchange_rate_value) }}/USD (stamped){% endif %}
       {% if order.lpo_filename %} · <a href="{{ url_for('orders.lpo', order_id=order.id) }}"><i class="bi bi-paperclip"></i> Customer LPO</a>{% endif %}
@@ -297,8 +297,11 @@
       <h2 class="h6">Order details</h2>
       <form method="post" action="{{ url_for('orders.update_details', order_id=order.id) }}">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="mb-2"><label class="form-label small">Requested delivery date</label>
-          <input class="form-control form-control-sm" type="date" name="delivery_date" value="{{ order.delivery_date or '' }}"></div>
+        <div class="mb-2"><label class="form-label small">Requested delivery date &amp; time</label>
+          <div class="d-flex gap-2">
+            <input class="form-control form-control-sm" type="date" name="delivery_date" value="{{ order.delivery_date or '' }}">
+            <input class="form-control form-control-sm" type="time" name="delivery_time" value="{{ order.delivery_time or '' }}" style="max-width:120px">
+          </div></div>
         <div class="mb-2"><label class="form-label small">Customer PO / reference</label>
           <input class="form-control form-control-sm" name="customer_po" value="{{ order.customer_po or '' }}"></div>
         <div class="mb-2"><label class="form-label small">Payment terms</label>

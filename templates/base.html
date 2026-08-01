@@ -58,8 +58,7 @@
       <a class="nav-link {{ 'active' if ep.startswith('offers') }}" href="{{ url_for('offers.index') }}"><i class="bi bi-receipt"></i> Quotes</a>
       <a class="nav-link {{ 'active' if ep.startswith('customers') and ep not in ['customers.distributors','customers.onboarding_queue'] }}" href="{{ url_for('customers.index') }}"><i class="bi bi-person-vcard"></i> Customers</a>
       <a class="nav-link {{ 'active' if ep=='customers.distributors' }}" href="{{ url_for('customers.distributors') }}"><i class="bi bi-truck"></i> Distributors</a>
-      <a class="nav-link {{ 'active' if ep.startswith('targets') }}" href="{{ url_for('targets.index') }}"><i class="bi bi-bullseye"></i> Rep targets</a>
-      <a class="nav-link {{ 'active' if ep.startswith('reps') }}" href="{{ url_for('reps.index') }}"><i class="bi bi-people-fill"></i> Reps</a>
+      <a class="nav-link {{ 'active' if ep.startswith('targets') or ep.startswith('reps') }}" href="{{ url_for('targets.index') }}"><i class="bi bi-people-fill"></i> Reps</a>
       <a class="nav-link {{ 'active' if ep=='crm.follow_ups' }}" href="{{ url_for('crm.follow_ups') }}"><i class="bi bi-flag"></i> Follow-ups</a>
       <a class="nav-link {{ 'active' if ep.startswith('messages') }}" href="{{ url_for('messages.index') }}"><i class="bi bi-chat-dots"></i> Messages{% if staff_unread %} <span class="badge badge-danger">{{ staff_unread }}</span>{% endif %}</a>
       {{ navgroup('Pricing & catalogue') }}
@@ -201,7 +200,7 @@
       <a class="nav-link {{ 'active' if ep.startswith('approvals') }}" href="{{ url_for('approvals.index') }}"><i class="bi bi-check2-square"></i> {{ 'Approvals' if current_user.is_admin else 'My approvals' }}{% if approvals_pending %} <span class="badge badge-danger">{{ approvals_pending }}</span>{% endif %}</a>
       {% endif %}
       {% if has_perm(current_user, 'manage_targets') %}
-      <a class="nav-link {{ 'active' if ep.startswith('targets') }}" href="{{ url_for('targets.index') }}"><i class="bi bi-bullseye"></i> Rep targets</a>
+      <a class="nav-link {{ 'active' if ep.startswith('targets') }}" href="{{ url_for('targets.index') }}"><i class="bi bi-people-fill"></i> Reps</a>
       {% endif %}
       {% endif %}
       {% if not current_user.is_store_manager and not current_user.is_stock_auditor

@@ -800,6 +800,7 @@ class SalesOrder(db.Model):
     submitted_at = db.Column(db.DateTime)
     order_date = db.Column(db.Date, default=date.today, index=True)
     delivery_date = db.Column(db.Date)
+    delivery_time = db.Column(db.String(8))   # requested delivery time "HH:MM"
     delivery_address = db.Column(db.Text)
     customer_po = db.Column(db.String(64))
     payment_terms = db.Column(db.String(64))

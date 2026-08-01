@@ -168,6 +168,7 @@ def new():
             exchange_rate_value=rate_value, exchange_rate_id=rate_id,
             order_date=date.today(),
             delivery_date=_parse_date(request.form.get("delivery_date")),
+            delivery_time=_parse_time(request.form.get("delivery_time")),
             delivery_address=request.form.get("delivery_address"),
             customer_po=request.form.get("customer_po"),
             payment_terms=customer.payment_terms,
@@ -493,6 +494,7 @@ def update_details(order_id):
         flash("This order can no longer be amended.", "warning")
         return redirect(url_for("orders.detail", order_id=order.id))
     order.delivery_date = _parse_date(request.form.get("delivery_date"))
+    order.delivery_time = _parse_time(request.form.get("delivery_time"))
     order.delivery_address = request.form.get("delivery_address")
     order.customer_po = request.form.get("customer_po")
     # Payment terms are set on the customer and inherited; never editable per order.
@@ -1330,6 +1332,13 @@ def export(order_id, fmt):
                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": f"attachment; filename=Order_{safe}.xlsx"})
     abort(404)
+
+
+def _parse_time(s):
+    """'HH:MM' from a time input; None when blank or unparseable."""
+    import re as _re
+    m = _re.match(r"^([01]?\d|2[0-3]):([0-5]\d)", (s or "").strip())
+    return f"{int(m.group(1)):02d}:{m.group(2)}" if m else None
 
 
 def _parse_date(s):
