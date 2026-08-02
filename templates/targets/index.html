@@ -10,8 +10,8 @@
 </div>
 
 <div class="rf-card p-3 mb-3">
-  <h2 class="h6 mb-1"><i class="bi bi-bar-chart-line text-rf-orange"></i> Rep ranking <span class="text-muted small fw-normal">(last 30 days · kilograms sold)</span></h2>
-  <div style="position:relative; height:{{ [rows|length * 28 + 40, 140]|max }}px">
+  <h2 class="h6 mb-1"><i class="bi bi-bar-chart-line text-rf-orange"></i> Rep ranking <span class="text-muted small fw-normal">({{ label }} · kilograms sold)</span></h2>
+  <div style="position:relative; height:{{ [[rows|length * 17 + 26, 340]|min, 120]|max }}px">
     <canvas id="repChart"></canvas>
   </div>
 </div>
@@ -19,7 +19,7 @@
 <div class="rf-card p-0">
   <table class="table table-sm table-hover align-middle mb-0">
     <thead><tr>
-      <th>Rep</th><th class="text-end">Customers</th><th class="text-end">Last 30 days</th>
+      <th>Rep</th><th class="text-end">Customers</th><th class="text-end">{{ label }} sales</th>
       <th class="text-end">Target</th><th class="text-end">Month to date</th>
       <th style="width:200px">Attainment</th><th></th>
     </tr></thead>
@@ -47,7 +47,7 @@
     </tbody>
   </table>
 </div>
-<div class="small text-muted mt-2">Click a rep for their performance report. Ordered by 30-day kilograms sold.</div>
+<div class="small text-muted mt-2">Click a rep for their performance report. Ordered by kilograms sold in the selected month.</div>
 {% endblock %}
 
 {% block scripts %}
@@ -62,12 +62,13 @@
   new Chart(ctx, {
     type: 'bar',
     data: { labels: names,
-      datasets: [{ data: kg.map(v => Math.round(v)), borderRadius: 4,
+      datasets: [{ data: kg.map(v => Math.round(v)), borderRadius: 3, barThickness: 9,
         backgroundColor: kg.map((_,i)=> i===0 ? '#F47A21' : '#e7d9c6') }] },
     options: { indexAxis: 'y', maintainAspectRatio: false,
       plugins: { legend: { display: false },
         tooltip: { callbacks: { label: c => Number(c.parsed.x).toLocaleString() + ' kg  (UGX ' + Number(val[c.dataIndex]).toLocaleString() + ')' } } },
-      scales: { x: { ticks: { callback: v => Number(v).toLocaleString() + ' kg' } } } }
+      scales: { x: { ticks: { font: { size: 10 }, callback: v => Number(v).toLocaleString() + ' kg' } },
+                y: { ticks: { font: { size: 10 } } } } }
   });
 })();
 </script>

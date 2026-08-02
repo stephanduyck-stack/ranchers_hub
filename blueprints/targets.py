@@ -78,13 +78,15 @@ def index():
     from models import Invoice, InvoiceLine, Product
     from services.inventory_costing import parse_pack_weight_kg
     year, month = _ym()
-    # 30-day revenue and kg per customer, mapped onto each rep's book below.
-    today = date.today()
-    w30 = today - timedelta(days=29)
+    # Revenue and kg per customer for the SELECTED month (the ym picker
+    # drives the whole page — Stephan, 2 Aug 2026), mapped onto each rep's
+    # book below. Current month = month to date.
+    m_from = date(year, month, 1)
+    m_to = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
     rev30 = {}
     for cid, v in db.session.execute(
             db.select(Invoice.customer_id, db.func.sum(Invoice.untaxed))
-            .where(Invoice.invoice_date >= w30,
+            .where(Invoice.invoice_date >= m_from, Invoice.invoice_date < m_to,
                    Invoice.payment_status != "Reversed",
                    Invoice.customer_id.isnot(None))
             .group_by(Invoice.customer_id)):
@@ -103,7 +105,7 @@ def index():
             db.select(Invoice.customer_id, InvoiceLine.product_id,
                       InvoiceLine.quantity)
             .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
-            .where(Invoice.invoice_date >= w30,
+            .where(Invoice.invoice_date >= m_from, Invoice.invoice_date < m_to,
                    Invoice.payment_status != "Reversed",
                    Invoice.customer_id.isnot(None))):
         q = float(qty or 0)
