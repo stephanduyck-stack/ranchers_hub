@@ -11,7 +11,9 @@
 
 <div class="rf-card p-3 mb-3">
   <h2 class="h6 mb-1"><i class="bi bi-bar-chart-line text-rf-orange"></i> Rep ranking <span class="text-muted small fw-normal">(last 30 days · kilograms sold)</span></h2>
-  <canvas id="repChart" height="{{ [rows|length * 26 + 30, 120]|max }}"></canvas>
+  <div style="position:relative; height:{{ [rows|length * 28 + 40, 140]|max }}px">
+    <canvas id="repChart"></canvas>
+  </div>
 </div>
 
 <div class="rf-card p-0">
