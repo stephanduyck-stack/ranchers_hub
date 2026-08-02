@@ -9,6 +9,11 @@
   </form>
 </div>
 
+<div class="rf-card p-3 mb-3">
+  <h2 class="h6 mb-1"><i class="bi bi-bar-chart-line text-rf-orange"></i> Rep ranking <span class="text-muted small fw-normal">(last 30 days · kilograms sold)</span></h2>
+  <canvas id="repChart" height="{{ [rows|length * 26 + 30, 120]|max }}"></canvas>
+</div>
+
 <div class="rf-card p-0">
   <table class="table table-sm table-hover align-middle mb-0">
     <thead><tr>
@@ -41,4 +46,27 @@
   </table>
 </div>
 <div class="small text-muted mt-2">Click a rep for their performance report. Ordered by 30-day kilograms sold.</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+(function(){
+  const ctx = document.getElementById('repChart');
+  if (!ctx) return;
+  const names = {{ rows|map(attribute='rep.full_name')|list|tojson }};
+  const kg = {{ rows|map(attribute='kg30')|list|tojson }};
+  const val = {{ rows|map(attribute='rev30')|list|tojson }};
+  new Chart(ctx, {
+    type: 'bar',
+    data: { labels: names,
+      datasets: [{ data: kg.map(v => Math.round(v)), borderRadius: 4,
+        backgroundColor: kg.map((_,i)=> i===0 ? '#F47A21' : '#e7d9c6') }] },
+    options: { indexAxis: 'y', maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => Number(c.parsed.x).toLocaleString() + ' kg  (UGX ' + Number(val[c.dataIndex]).toLocaleString() + ')' } } },
+      scales: { x: { ticks: { callback: v => Number(v).toLocaleString() + ' kg' } } } }
+  });
+})();
+</script>
 {% endblock %}

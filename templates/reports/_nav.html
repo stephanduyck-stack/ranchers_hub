@@ -1,35 +1,50 @@
 {% set ep = request.endpoint or '' %}
 {% set u = current_user %}
 <style>
-  .rf-report-tabs { border-bottom: 2px solid #E0D5C8; padding-bottom: 0; margin-bottom: 1rem; }
+  .rf-report-tabs { margin-bottom: 1rem; }
   .rf-report-tabs .nav-link {
     color: #5A5348; font-size: .85rem; font-weight: 500;
-    padding: .38rem .8rem; border-radius: .5rem .5rem 0 0;
-    border: 1px solid transparent; margin-bottom: -2px;
+    padding: .4rem 1rem; border-radius: 999px;
+    border: 1px solid #E0D5C8; background: #fff; margin-bottom: .15rem;
   }
-  .rf-report-tabs .nav-link:hover { background: #FBF3EA; color: #1F1B16; }
+  .rf-report-tabs .nav-link:hover { background: #FBF3EA; color: #1F1B16; border-color: #F47A21; }
   .rf-report-tabs .nav-link.active {
     background: #F47A21; color: #fff;
-    border-color: #F47A21; box-shadow: 0 2px 4px rgba(244,122,33,.25);
+    border-color: #F47A21; box-shadow: 0 2px 6px rgba(244,122,33,.3);
   }
+  .rf-sub-tabs { margin: -.4rem 0 1rem 0; }
+  .rf-sub-tabs .nav-link {
+    color: #5A5348; font-size: .8rem; font-weight: 500;
+    padding: .28rem .85rem; border-radius: 999px; border: 1px dashed #E0D5C8;
+  }
+  .rf-sub-tabs .nav-link:hover { background: #FBF3EA; }
+  .rf-sub-tabs .nav-link.active { background: #6E7149; color: #fff; border: 1px solid #6E7149; }
 </style>
+{% set sales_group = ep in ('reports.sales', 'reports.products_monthly', 'reports.sales_history') %}
+{% set can_reps = u.is_admin or u.is_ceo or u.is_sales_director or u.is_sales_manager or has_perm(u, 'manage_targets') %}
 <ul class="nav rf-report-tabs flex-wrap gap-1">
   <li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.index' }}" href="{{ url_for('reports.index') }}"><i class="bi bi-grid"></i> Overview</a></li>
   {% if can_view_report(u,'top90') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.top90' }}" href="{{ url_for('reports.top90') }}"><i class="bi bi-trophy"></i> Top performers (90d)</a></li>{% endif %}
-  {% if can_view_report(u,'fulfilment') %}<li class="nav-item"><a class="nav-link {{ 'active' if 'fulfilment' in ep and 'perf' not in ep }}" href="{{ url_for('reports.fulfilment') }}">Fulfilment</a></li>{% endif %}
-  {% if can_view_report(u,'sales') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.sales' }}" href="{{ url_for('reports.sales') }}">Sales</a></li>{% endif %}
-  {% if can_view_report(u,'customer_insights') %}<li class="nav-item"><a class="nav-link {{ 'active' if 'customer_insights' in ep }}" href="{{ url_for('reports.customer_insights') }}">Customer insights</a></li>{% endif %}
+  {% if can_view_report(u,'sales') %}<li class="nav-item"><a class="nav-link {{ 'active' if sales_group }}" href="{{ url_for('reports.sales') }}"><i class="bi bi-graph-up"></i> Sales</a></li>{% endif %}
+  {% if can_view_report(u,'customer_insights') %}<li class="nav-item"><a class="nav-link {{ 'active' if 'customer_insights' in ep }}" href="{{ url_for('reports.customer_insights') }}"><i class="bi bi-person-vcard"></i> Customer insights</a></li>{% endif %}
+  {% if can_reps %}<li class="nav-item"><a class="nav-link" href="{{ url_for('targets.index') }}"><i class="bi bi-people-fill"></i> Reps</a></li>{% endif %}
+  {% if can_view_report(u,'fulfilment') %}<li class="nav-item"><a class="nav-link {{ 'active' if 'fulfilment' in ep and 'perf' not in ep }}" href="{{ url_for('reports.fulfilment') }}"><i class="bi bi-truck"></i> Fulfilment</a></li>{% endif %}
+  {% if can_view_report(u,'fulfilment_perf') %}<li class="nav-item"><a class="nav-link {{ 'active' if 'fulfilment_perf' in ep }}" href="{{ url_for('reports.fulfilment_perf') }}">Fulfilment KPIs</a></li>{% endif %}
   {% if can_view_report(u,'lapsed') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.lapsed' }}" href="{{ url_for('reports.lapsed') }}">Lapsed &amp; at-risk</a></li>{% endif %}
   {% if can_view_report(u,'reorder') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.reorder' }}" href="{{ url_for('reports.reorder') }}">Reorder due</a></li>{% endif %}
   {% if can_view_report(u,'scorecard') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.scorecard' }}" href="{{ url_for('reports.scorecard') }}">Scorecard</a></li>{% endif %}
   {% if can_view_report(u,'velocity') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.velocity' }}" href="{{ url_for('reports.velocity') }}">Product velocity</a></li>{% endif %}
-  {% if can_view_report(u,'fulfilment_perf') %}<li class="nav-item"><a class="nav-link {{ 'active' if 'fulfilment_perf' in ep }}" href="{{ url_for('reports.fulfilment_perf') }}">Fulfilment KPIs</a></li>{% endif %}
   {% if can_view_report(u,'offers') %}<li class="nav-item"><a class="nav-link {{ 'active' if 'offers_report' in ep }}" href="{{ url_for('reports.offers_report') }}">Quote conversion</a></li>{% endif %}
   {% if can_view_report(u,'feedback') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.feedback' }}" href="{{ url_for('reports.feedback') }}">Customer feedback</a></li>{% endif %}
-  {% if can_view_report(u,'history') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.sales_history' }}" href="{{ url_for('reports.sales_history') }}">Sales history</a></li>{% endif %}
-  {% if can_view_report(u,'product_month') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.products_monthly' }}" href="{{ url_for('reports.products_monthly') }}">Products by month</a></li>{% endif %}
   {% if can_view_report(u,'all_time') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.all_time' }}" href="{{ url_for('reports.all_time') }}">All-time</a></li>{% endif %}
 </ul>
+{% if sales_group %}
+<ul class="nav rf-sub-tabs flex-wrap gap-1">
+  <li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.sales' }}" href="{{ url_for('reports.sales') }}">Sales dashboard</a></li>
+  {% if can_view_report(u,'product_month') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.products_monthly' }}" href="{{ url_for('reports.products_monthly') }}">Products by month</a></li>{% endif %}
+  {% if can_view_report(u,'history') %}<li class="nav-item"><a class="nav-link {{ 'active' if ep=='reports.sales_history' }}" href="{{ url_for('reports.sales_history') }}">Sales history</a></li>{% endif %}
+</ul>
+{% endif %}
 {% macro daterange(endpoint, extra={}) %}
 <form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for(endpoint) }}">
   {% for k,v in extra.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}

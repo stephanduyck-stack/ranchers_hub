@@ -414,8 +414,96 @@ def sales():
 
     cat_max = {c: max((v["value"] for _n, v in items), default=0)
                for c, items in data["category"].items()}
+
+    # ---- CEO dashboard on top (Stephan, 2 Aug 2026): channel view over the
+    # same date range and segment filter. Channel = customer category, with
+    # distributors split Export vs Local. Kilograms lead, value follows.
+    import re as _re2
+    from models import InvoiceLine, Product, Customer
+    from services.revenue import export_customer_ids, dist_band
+    from services.inventory_costing import parse_pack_weight_kg
+    exp_ids = export_customer_ids()
+
+    def _chan_of(c):
+        if c is None:
+            return "Other"
+        if (c.segment or "customer") == "distributor":
+            return f"{dist_band(c, exp_ids)} distributors"
+        return (c.category.name if c.category else None) or "Other"
+
+    prods_all = db.session.scalars(db.select(Product)).all()
+
+    def _pwt(p):
+        t = _re2.sub(r"^[^0-9]*", "", str(p.pack_size or ""))
+        w = parse_pack_weight_kg(t)
+        if w:
+            return w
+        return 1.0 if (p.unit_of_measure or "").strip().lower() == "kg" else None
+
+    pw = {p.id: _pwt(p) for p in prods_all}
+    pname_all = {p.id: p.description for p in prods_all}
+    cust_chan = {c.id: _chan_of(c) for c in db.session.scalars(db.select(Customer))}
+
+    chan_val = defaultdict(float)
+    chan_orders = defaultdict(int)
+    chan_kg = defaultdict(float)
+    chan_cust = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))   # val, kg
+    chan_prod = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))   # val, kg
+    tot_val = tot_kg = 0.0
+
+    for i in db.session.scalars(db.select(Invoice).where(
+            Invoice.payment_status != "Reversed",
+            Invoice.invoice_date >= frm, Invoice.invoice_date <= to)):
+        if not seg_ok(i.customer):
+            continue
+        ch = cust_chan.get(i.customer_id, "Other")
+        v = float(i.untaxed or 0)
+        chan_val[ch] += v
+        chan_orders[ch] += 1
+        chan_cust[ch][i.customer_name or "—"][0] += v
+        tot_val += v
+
+    for cid, cname, pid, pnm, qty, amt in db.session.execute(
+            db.select(Invoice.customer_id, Invoice.customer_name,
+                      InvoiceLine.product_id, InvoiceLine.product_name,
+                      InvoiceLine.quantity, InvoiceLine.amount)
+            .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
+            .where(Invoice.payment_status != "Reversed",
+                   Invoice.invoice_date >= frm, Invoice.invoice_date <= to)):
+        ch = cust_chan.get(cid, "Other")
+        if seg == "distributor" and "distributors" not in ch:
+            continue
+        if seg == "direct" and (cid is None or "distributors" in ch):
+            continue
+        q = float(qty or 0)
+        w = pw.get(pid)
+        kgs = q * w if w else q
+        a = float(amt or 0)
+        label = pname_all.get(pid) or pnm or "—"
+        chan_kg[ch] += kgs
+        chan_prod[ch][label][0] += a
+        chan_prod[ch][label][1] += kgs
+        chan_cust[ch][cname or "—"][1] += kgs
+        tot_kg += kgs
+
+    channels = []
+    for ch in chan_val.keys() | chan_kg.keys():
+        tp = sorted(((n, v[0], v[1]) for n, v in chan_prod[ch].items()),
+                    key=lambda r: -r[2])[:5]
+        tc = sorted(((n, v[0], v[1]) for n, v in chan_cust[ch].items()),
+                    key=lambda r: (-r[2], -r[1]))[:5]
+        channels.append({"name": ch, "value": chan_val.get(ch, 0.0),
+                         "orders": chan_orders.get(ch, 0),
+                         "kg": chan_kg.get(ch, 0.0),
+                         "top_products": tp, "top_customers": tc})
+    channels.sort(key=lambda r: -r["kg"])
+
     return render_template("reports/sales.html", frm=frm, to=to, group=group,
-                           data=data, n_orders=n_invoices, cat_max=cat_max, seg=seg)
+                           data=data, n_orders=n_invoices, cat_max=cat_max, seg=seg,
+                           channels=channels, tot_val=tot_val, tot_kg=tot_kg,
+                           chart_chan=[c["name"] for c in channels],
+                           chart_kg=[round(c["kg"]) for c in channels],
+                           chart_val=[round(c["value"]) for c in channels])
 
 
 # ---------------------------------------------------------------------------
