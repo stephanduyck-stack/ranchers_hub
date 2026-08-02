@@ -402,8 +402,37 @@ def features():
         return redirect(url_for("admin.features"))
     flags = feat.all_features()
     comms = {k: settings_svc.get(k, "") for k in COMMS_KEYS}
-    return render_template("admin/features.html", features=feat.FEATURES,
+    # 'features' is a template GLOBAL (dict of live flags injected app-wide
+    # for base.html); passing the FEATURES definition list under the same
+    # name shadowed the dict and crashed base.html (2 Aug 2026).
+    return render_template("admin/features.html", feature_defs=feat.FEATURES,
                            flags=flags, comms=comms)
+
+
+@bp.route("/features/test-mail", methods=["POST"])
+def test_mail():
+    """Send a test email with the SAVED SMTP settings so the admin sees on
+    the spot whether mail works (Stephan, 2 Aug 2026). Uses the same
+    send path as the real portal emails; the failure reason is flashed."""
+    from services import comms
+    to = (request.form.get("test_to") or "").strip()
+    if not to or "@" not in to:
+        flash("Enter a valid email address to send the test to.", "warning")
+        return redirect(url_for("admin.features"))
+    ok, reason = comms.send_email(
+        to, "Ranchers Pricing App — test email",
+        "This is a test email from the Ranchers Pricing App.\n\n"
+        "If you are reading this, the SMTP settings on Admin > Features "
+        "work. Sent by the Test button.")
+    if ok:
+        flash(f"Test email sent to {to}. Check the inbox (and the spam "
+              "folder — if it landed there, the sender domain still needs "
+              "SPF/DKIM/DMARC).", "success")
+    else:
+        flash(f"Test email FAILED: {reason}", "danger")
+    log("test_email", "setting", None, detail=f"test email to {to}: {'sent' if ok else reason}",
+        commit=True)
+    return redirect(url_for("admin.features"))
 
 
 @bp.route("/theme-preview")

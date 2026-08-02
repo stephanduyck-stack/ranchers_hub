@@ -7,7 +7,7 @@
   <div class="rf-card p-4 mb-3">
     <h2 class="h6 mb-1">Optional features</h2>
     <p class="form-text mt-0">Everything here is off by default. Turn on what you want — nothing else changes.</p>
-    {% for name, label, desc in features %}
+    {% for name, label, desc in feature_defs %}
     <div class="form-check form-switch py-2 border-bottom">
       <input class="form-check-input" type="checkbox" role="switch" id="f_{{ name }}" name="feat:{{ name }}" {{ 'checked' if flags[name] }}>
       <label class="form-check-label" for="f_{{ name }}"><strong>{{ label }}</strong>
@@ -54,4 +54,15 @@
 
   <button class="btn btn-primary">Save features</button>
 </form>
+
+<div class="rf-card p-4 mb-3 mt-3" style="max-width:760px">
+  <h2 class="h6 mb-1">Test the mail settings</h2>
+  <p class="form-text mt-0">Save the settings above first, then send a test. The test uses the saved values, exactly like the portal emails do.</p>
+  <form method="post" action="{{ url_for('admin.test_mail') }}" class="row g-2 align-items-end">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="col-md-7"><label class="form-label small">Send test email to</label>
+      <input class="form-control form-control-sm" type="email" name="test_to" placeholder="you@ranchersfinest.com" required></div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary"><i class="bi bi-envelope-check"></i> Send test email</button></div>
+  </form>
+</div>
 {% endblock %}
