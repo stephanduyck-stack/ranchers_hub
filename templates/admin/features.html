@@ -29,10 +29,10 @@
       <div class="col-md-6"><label class="form-label small">Password</label>
         <input class="form-control form-control-sm" type="password" name="smtp_pass" value="{{ comms.smtp_pass }}" placeholder="{{ '••••••' if comms.smtp_pass else '' }}"></div>
       <div class="col-md-6"><label class="form-label small">From address</label>
-        <input class="form-control form-control-sm" name="smtp_from" value="{{ comms.smtp_from }}" placeholder="portal@ranchersfinest.com">
+        <input class="form-control form-control-sm" name="smtp_from" value="{{ comms.smtp_from }}" placeholder="thehub@ranchersfinest.net">
         <div class="form-text">Use an address on a domain with SPF/DKIM/DMARC set up — the biggest factor against spam filters.</div></div>
       <div class="col-md-6"><label class="form-label small">Reply-to (optional)</label>
-        <input class="form-control form-control-sm" name="smtp_reply_to" value="{{ comms.smtp_reply_to }}" placeholder="sales@ranchersfinest.com">
+        <input class="form-control form-control-sm" name="smtp_reply_to" value="{{ comms.smtp_reply_to }}" placeholder="sales@ranchersfinest.net">
         <div class="form-text">Where customer replies land when From is a no-reply box.</div></div>
     </div>
   </div>
@@ -61,7 +61,7 @@
   <form method="post" action="{{ url_for('admin.test_mail') }}" class="row g-2 align-items-end">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="col-md-7"><label class="form-label small">Send test email to</label>
-      <input class="form-control form-control-sm" type="email" name="test_to" placeholder="you@ranchersfinest.com" required></div>
+      <input class="form-control form-control-sm" type="email" name="test_to" placeholder="you@ranchersfinest.net" required></div>
     <div class="col-auto"><button class="btn btn-sm btn-primary"><i class="bi bi-envelope-check"></i> Send test email</button></div>
   </form>
 </div>

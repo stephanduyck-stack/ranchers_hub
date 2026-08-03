@@ -27,30 +27,10 @@
 {% macro ugxm(v) %}UGX {{ '{:,.0f}'.format(v or 0) }}{% endmacro %}
 {% macro kgm(v) %}{{ '{:,.0f}'.format(v or 0) }} kg{% endmacro %}
 
-<!-- CEO dashboard: channels -->
-<div class="row g-3 mb-3">
-  <div class="col-md-3 col-6">
-    <div class="rf-card p-3 h-100">
-      <div class="text-muted small text-uppercase">Volume sold</div>
-      <div class="h5 mb-0" style="color:#F47A21">{{ kgm(tot_kg) }}</div>
-      <div class="small text-muted">{{ ugxm(tot_val) }}</div>
-    </div>
-  </div>
-  <div class="col-md-3 col-6">
-    <div class="rf-card p-3 h-100">
-      <div class="text-muted small text-uppercase">Invoices</div>
-      <div class="h5 mb-0">{{ '{:,}'.format(n_orders) }}</div>
-      <div class="small text-muted">{{ channels|length }} channels</div>
-    </div>
-  </div>
-  <div class="col-md-6">
-    <div class="rf-card p-3 h-100">
-      <h2 class="h6 mb-1"><i class="bi bi-pie-chart text-rf-orange"></i> Channel share <span class="text-muted small fw-normal">(kg)</span></h2>
-      <canvas id="chanChart" height="105"></canvas>
-    </div>
-  </div>
-</div>
-
+<!-- CEO dashboard: channels. Shown on the By total view only (3 Aug 2026,
+     Stephan: with the cards always on top, switching the grouping looked
+     like nothing changed). Tile row + share doughnut removed same day. -->
+{% if group == 'total' %}
 <div class="row g-3 mb-3">
   {% for ch in channels %}
   <div class="col-lg-6">
@@ -84,6 +64,7 @@
   </div>
   {% endfor %}
 </div>
+{% endif %}
 
 <h2 class="h6 mt-2"><i class="bi bi-table text-rf-orange"></i> Detail</h2>
 
@@ -135,23 +116,4 @@
     {% endfor %}</tbody></table></div>
   {% else %}<p class="text-muted">No sales in this period.</p>{% endfor %}
 {% endif %}
-{% endblock %}
-
-{% block scripts %}
-<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
-<script>
-(function(){
-  const ctx = document.getElementById('chanChart');
-  if (!ctx) return;
-  const kg = {{ chart_kg|tojson }};
-  const val = {{ chart_val|tojson }};
-  new Chart(ctx, {
-    type: 'doughnut',
-    data: { labels: {{ chart_chan|tojson }},
-      datasets: [{ data: kg, backgroundColor: ['#F47A21','#6E7149','#2E7D32','#F9A03F','#ED1C24','#2B2B2B','#8D6E63','#4E7CA1','#A78BFA','#0EA5E9'] }] },
-    options: { plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 10 } } },
-      tooltip: { callbacks: { label: c => c.label + ': ' + Number(c.parsed).toLocaleString() + ' kg (UGX ' + Number(val[c.dataIndex]).toLocaleString() + ')' } } } }
-  });
-})();
-</script>
 {% endblock %}

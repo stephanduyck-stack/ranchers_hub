@@ -29,6 +29,7 @@ def _guard():
     # Per-report visibility: map the requested endpoint to a report key.
     ep = (request.endpoint or "").split(".")[-1]
     key = {"fulfilment": "fulfilment", "sales": "sales",
+           "sales_by_month": "sales", "sales_month_detail": "sales",
            "customer_insights": "customer_insights", "lapsed": "lapsed",
            "reorder": "reorder", "scorecard": "scorecard", "velocity": "velocity",
            "fulfilment_perf": "fulfilment_perf", "offers_report": "offers",
@@ -324,8 +325,26 @@ def sales():
     """Sales report from the uploaded history: revenue by total, customer,
     category, product and salesperson, over a date range (UGX, net of credits)."""
     from models import Invoice, SalesHistory
-    frm = _parse(request.args.get("from")) or date(2024, 1, 1)
-    to = _parse(request.args.get("to")) or date.today()
+    # Date range sticks (Stephan, 3 Aug 2026): default is the CURRENT MONTH
+    # to date, and an explicitly chosen range is remembered in the session,
+    # so switching groupings, segments or sub-tabs never asks for the dates
+    # again. The old default was 2024-01-01 → today on every visit.
+    from flask import session as _sess
+    qf = _parse(request.args.get("from"))
+    qt = _parse(request.args.get("to"))
+    today_ = date.today()
+    if qf or qt:
+        frm = qf or today_.replace(day=1)
+        to = qt or today_
+        _sess["sales_range"] = [frm.isoformat(), to.isoformat()]
+    else:
+        saved = _sess.get("sales_range") or []
+        frm = _parse(saved[0]) if len(saved) > 0 else None
+        to = _parse(saved[1]) if len(saved) > 1 else None
+        frm = frm or today_.replace(day=1)
+        to = to or today_
+    if to < frm:
+        frm, to = to, frm
     group = request.args.get("group", "total")
     seg = request.args.get("segment", "all")
     cur = "UGX"
@@ -431,7 +450,12 @@ def sales():
             return f"{dist_band(c, exp_ids)} distributors"
         return (c.category.name if c.category else None) or "Other"
 
-    prods_all = db.session.scalars(db.select(Product)).all()
+    # The channel cards render only on the By total view (3 Aug 2026,
+    # Stephan: with the cards always on top, switching the grouping looked
+    # like nothing changed). Skip the heavy line scan for the other views.
+    show_channels = group == "total"
+    prods_all = (db.session.scalars(db.select(Product)).all()
+                 if show_channels else [])
 
     def _pwt(p):
         t = _re2.sub(r"^[^0-9]*", "", str(p.pack_size or ""))
@@ -451,9 +475,10 @@ def sales():
     chan_prod = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))   # val, kg
     tot_val = tot_kg = 0.0
 
-    for i in db.session.scalars(db.select(Invoice).where(
+    for i in (db.session.scalars(db.select(Invoice).where(
             Invoice.payment_status != "Reversed",
-            Invoice.invoice_date >= frm, Invoice.invoice_date <= to)):
+            Invoice.invoice_date >= frm, Invoice.invoice_date <= to))
+            if show_channels else []):
         if not seg_ok(i.customer):
             continue
         ch = cust_chan.get(i.customer_id, "Other")
@@ -463,13 +488,14 @@ def sales():
         chan_cust[ch][i.customer_name or "—"][0] += v
         tot_val += v
 
-    for cid, cname, pid, pnm, qty, amt in db.session.execute(
+    for cid, cname, pid, pnm, qty, amt in (db.session.execute(
             db.select(Invoice.customer_id, Invoice.customer_name,
                       InvoiceLine.product_id, InvoiceLine.product_name,
                       InvoiceLine.quantity, InvoiceLine.amount)
             .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
             .where(Invoice.payment_status != "Reversed",
-                   Invoice.invoice_date >= frm, Invoice.invoice_date <= to)):
+                   Invoice.invoice_date >= frm, Invoice.invoice_date <= to))
+            if show_channels else []):
         ch = cust_chan.get(cid, "Other")
         if seg == "distributor" and "distributors" not in ch:
             continue
@@ -915,8 +941,6 @@ def products_monthly():
 
     prod = defaultdict(lambda: {"rev": 0.0, "qty": 0.0, "last": 0,
                                 "recent": 0.0, "prev": 0.0})
-    sel_month = defaultdict(lambda: {"rev": 0.0, "qty": 0.0})
-    sel_cust = defaultdict(float)
     for r in rows:
         lbl = pmap.get(r.product_id)
         if not lbl:
@@ -932,10 +956,6 @@ def products_monthly():
             p["recent"] += rev
         elif 3 <= gap < 6:
             p["prev"] += rev
-        if sel and lbl == sel:
-            sel_month[(r.year, r.month)]["rev"] += rev
-            sel_month[(r.year, r.month)]["qty"] += float(r.quantity or 0)
-            sel_cust[r.customer_name] += rev
 
     def trend(p):
         rec, prv = p["recent"], p["prev"]
@@ -960,21 +980,367 @@ def products_monthly():
     n_stopped = sum(1 for x in items if x["trend"] == "stopped")
     all_names = sorted(prod.keys())
 
+    # Product drill (reworked 3 Aug 2026, Stephan): months side by side in
+    # kg with the month-on-month change, customer performance underneath
+    # ranked by kg bought. Merges the invoice months on top of the pivot,
+    # so the drill runs to the latest upload, not the pivot cutover.
     drill = None
     if sel and sel in prod:
-        ms = sorted(sel_month)
+        from models import Invoice, InvoiceLine
+        inv_months = _invoice_month_set()
+        pw = _pack_weights()
+        sel_ids = {pid for pid, lbl2 in pmap.items() if lbl2 == sel}
+        latest_all = max([latest_idx] +
+                         [y * 12 + m for (y, m) in inv_months] or [latest_idx])
+        win_start = latest_all - 11          # last 12 months window
+
+        sm = defaultdict(lambda: {"kg": 0.0, "val": 0.0})
+        sc = {}
+
+        def _cust(name, cid=None):
+            c = sc.get(name)
+            if c is None:
+                c = sc[name] = {"name": name, "cid": cid, "kg": 0.0,
+                                "val": 0.0, "kg12": 0.0, "val12": 0.0}
+            if cid and not c["cid"]:
+                c["cid"] = cid
+            return c
+
+        def _add(y, m, cname, cid, kgs, v):
+            sm[(y, m)]["kg"] += kgs
+            sm[(y, m)]["val"] += v
+            c = _cust(cname or "—", cid)
+            c["kg"] += kgs
+            c["val"] += v
+            if y * 12 + m >= win_start:
+                c["kg12"] += kgs
+                c["val12"] += v
+
+        for r in rows:
+            if pmap.get(r.product_id) != sel or (r.year, r.month) in inv_months:
+                continue
+            w = pw.get(r.product_id)
+            q = float(r.quantity or 0)
+            _add(r.year, r.month, r.customer_name, r.customer_id,
+                 q * w if w else q, float(r.revenue or 0))
+        if sel_ids:
+            for d, cid, cname, pid, qty, amt in db.session.execute(
+                    db.select(Invoice.invoice_date, Invoice.customer_id,
+                              Invoice.customer_name, InvoiceLine.product_id,
+                              InvoiceLine.quantity, InvoiceLine.amount)
+                    .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
+                    .where(Invoice.payment_status != "Reversed",
+                           Invoice.invoice_date.isnot(None),
+                           InvoiceLine.product_id.in_(sel_ids))):
+                w = pw.get(pid)
+                q = float(qty or 0)
+                _add(d.year, d.month, cname, cid,
+                     q * w if w else q, float(amt or 0))
+
+        ms = sorted(sm)
+        month_cols = []
+        for (y, m) in ms[-13:]:              # side-by-side table
+            pk = (y - 1, 12) if m == 1 else (y, m - 1)
+            p2 = sm.get(pk)
+            cell = sm[(y, m)]
+            month_cols.append({
+                "label": datetime(y, m, 1).strftime("%b %y"),
+                "kg": cell["kg"], "val": cell["val"],
+                "kg_d": ((cell["kg"] - p2["kg"]) / p2["kg"] * 100.0)
+                        if p2 and p2["kg"] else None,
+            })
+        cust_rows = sorted(sc.values(),
+                           key=lambda c: (-c["kg12"], -c["kg"]))
         drill = {
             "name": sel,
             "labels": [datetime(y, m, 1).strftime("%b %y") for y, m in ms],
-            "rev": [round(sel_month[k]["rev"]) for k in ms],
-            "qty": [round(sel_month[k]["qty"]) for k in ms],
-            "top_customers": sorted(sel_cust.items(), key=lambda kv: kv[1], reverse=True)[:15],
+            "rev": [round(sm[k]["val"]) for k in ms],
+            "kg": [round(sm[k]["kg"]) for k in ms],
+            "months": month_cols,
+            "customers": cust_rows[:30],
+            "n_cust": len(cust_rows),
+            "win_label": _idx_to_date(win_start).strftime("%b %Y"),
         }
 
     latest_label = datetime(ly, lm, 1).strftime("%b %Y")
     return render_template("reports/products_month.html", has_data=True,
                            products=products, all_names=all_names, drill=drill,
                            n_stopped=n_stopped, latest_label=latest_label)
+
+
+# ---------------------------------------------------------------------------
+# Sales by month — month-on-month comparison with a per-month drill-down
+# (Stephan, 3 Aug 2026). One row per month, kilograms lead, value follows.
+# Clicking a month opens customer, rep and distributor performance for the
+# month, each against the previous month. Months covered by uploaded
+# invoices aggregate the invoice lines; older months come from the monthly
+# history pivot, which carries no salesperson — rep performance starts
+# with the first invoice month.
+# ---------------------------------------------------------------------------
+def _pack_weights():
+    """product_id -> kg per unit (None when unknown; callers count 1 unit
+    = 1 kg and flag the estimate, same convention as the Sales dashboard)."""
+    import re as _re
+    from models import Product
+    from services.inventory_costing import parse_pack_weight_kg
+    w_map = {}
+    for p in db.session.scalars(db.select(Product)):
+        t = _re.sub(r"^[^0-9]*", "", str(p.pack_size or ""))
+        w = parse_pack_weight_kg(t)
+        if not w:
+            w = 1.0 if (p.unit_of_measure or "").strip().lower() == "kg" else None
+        w_map[p.id] = w
+    return w_map
+
+
+def _invoice_month_set():
+    """(year, month) pairs covered by uploaded invoices. Those months
+    aggregate from invoices; every other month falls back to the pivot."""
+    from models import Invoice
+    return {(d.year, d.month) for (d,) in db.session.execute(
+        db.select(Invoice.invoice_date).distinct().where(
+            Invoice.invoice_date.isnot(None),
+            Invoice.payment_status != "Reversed"))}
+
+
+def _cust_dist_info():
+    """customer_id -> distributor flag + Export/Local band."""
+    from models import Customer
+    from services.revenue import export_customer_ids
+    exp_ids = export_customer_ids()
+    return {cid: {"dist": (seg or "customer") == "distributor",
+                  "band": "Export" if cid in exp_ids else "Local"}
+            for cid, seg in db.session.execute(
+                db.select(Customer.id, Customer.segment))}
+
+
+def _month_perf(year, month, pw, cust_info, inv_months):
+    """One month aggregated: totals plus per-customer, per-rep and
+    per-distributor kg/value."""
+    from models import Invoice, InvoiceLine, SalesHistory
+    out = {"kg": 0.0, "val": 0.0, "inv": 0, "unknown_packs": 0,
+           "customers": {}, "reps": {}, "dists": {},
+           "source": "invoices" if (year, month) in inv_months else "history"}
+
+    def cell(store, key, cid=None):
+        c = store.get(key)
+        if c is None:
+            c = store[key] = {"kg": 0.0, "val": 0.0, "inv": 0, "cid": cid}
+        if cid and not c["cid"]:
+            c["cid"] = cid
+        return c
+
+    if out["source"] == "invoices":
+        m_start = date(year, month, 1)
+        m_next = date(year + (month == 12), month % 12 + 1, 1)
+        for cid, cname, rep, untaxed in db.session.execute(
+                db.select(Invoice.customer_id, Invoice.customer_name,
+                          Invoice.salesperson, Invoice.untaxed)
+                .where(Invoice.payment_status != "Reversed",
+                       Invoice.invoice_date >= m_start,
+                       Invoice.invoice_date < m_next)):
+            v = float(untaxed or 0)
+            out["val"] += v
+            out["inv"] += 1
+            c = cell(out["customers"], cname or "—", cid)
+            c["val"] += v
+            c["inv"] += 1
+            r = cell(out["reps"], (rep or "").strip() or "—")
+            r["val"] += v
+            r["inv"] += 1
+            info = cust_info.get(cid)
+            if info and info["dist"]:
+                d = cell(out["dists"], cname or "—", cid)
+                d["val"] += v
+                d["inv"] += 1
+                d["band"] = info["band"]
+        for cid, cname, rep, pid, qty in db.session.execute(
+                db.select(Invoice.customer_id, Invoice.customer_name,
+                          Invoice.salesperson, InvoiceLine.product_id,
+                          InvoiceLine.quantity)
+                .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
+                .where(Invoice.payment_status != "Reversed",
+                       Invoice.invoice_date >= m_start,
+                       Invoice.invoice_date < m_next)):
+            q = float(qty or 0)
+            w = pw.get(pid)
+            kgs = q * w if w else q
+            if not w:
+                out["unknown_packs"] += 1
+            out["kg"] += kgs
+            cell(out["customers"], cname or "—", cid)["kg"] += kgs
+            cell(out["reps"], (rep or "").strip() or "—")["kg"] += kgs
+            info = cust_info.get(cid)
+            if info and info["dist"]:
+                d = cell(out["dists"], cname or "—", cid)
+                d["kg"] += kgs
+                d["band"] = info["band"]
+    else:
+        for r in db.session.scalars(db.select(SalesHistory).where(
+                SalesHistory.year == year, SalesHistory.month == month)):
+            v = float(r.revenue or 0)
+            q = float(r.quantity or 0)
+            w = pw.get(r.product_id)
+            kgs = q * w if w else q
+            if not w:
+                out["unknown_packs"] += 1
+            out["val"] += v
+            out["kg"] += kgs
+            c = cell(out["customers"], r.customer_name or "—", r.customer_id)
+            c["val"] += v
+            c["kg"] += kgs
+            info = cust_info.get(r.customer_id)
+            if info and info["dist"]:
+                d = cell(out["dists"], r.customer_name or "—", r.customer_id)
+                d["val"] += v
+                d["kg"] += kgs
+                d["band"] = info["band"]
+    return out
+
+
+@bp.route("/sales-month")
+def sales_by_month():
+    """One row per month: kg, net UGX and the month-on-month change.
+    Each month links to its detail page."""
+    from models import Invoice, InvoiceLine, SalesHistory
+    try:
+        months_back = int(request.args.get("months") or 13)
+    except ValueError:
+        months_back = 13
+    months_back = min(max(months_back, 3), 36)
+    today = date.today()
+    end_idx = today.year * 12 + today.month
+    start_idx = end_idx - months_back        # one extra month for the first delta
+
+    pw = _pack_weights()
+    inv_months = _invoice_month_set()
+    agg = defaultdict(lambda: {"kg": 0.0, "val": 0.0, "inv": 0})
+
+    m_from = _idx_to_date(start_idx)
+    for d, untaxed in db.session.execute(
+            db.select(Invoice.invoice_date, Invoice.untaxed).where(
+                Invoice.payment_status != "Reversed",
+                Invoice.invoice_date >= m_from)):
+        idx = d.year * 12 + d.month
+        if idx <= end_idx:
+            agg[idx]["val"] += float(untaxed or 0)
+            agg[idx]["inv"] += 1
+    for d, pid, qty in db.session.execute(
+            db.select(Invoice.invoice_date, InvoiceLine.product_id,
+                      InvoiceLine.quantity)
+            .join(Invoice, Invoice.id == InvoiceLine.invoice_id)
+            .where(Invoice.payment_status != "Reversed",
+                   Invoice.invoice_date >= m_from)):
+        idx = d.year * 12 + d.month
+        if idx <= end_idx:
+            q = float(qty or 0)
+            w = pw.get(pid)
+            agg[idx]["kg"] += q * w if w else q
+    for r in db.session.scalars(db.select(SalesHistory).where(
+            SalesHistory.month.isnot(None))):
+        idx = r.year * 12 + r.month
+        if not (start_idx <= idx <= end_idx) or (r.year, r.month) in inv_months:
+            continue
+        agg[idx]["val"] += float(r.revenue or 0)
+        q = float(r.quantity or 0)
+        w = pw.get(r.product_id)
+        agg[idx]["kg"] += q * w if w else q
+
+    rows = []
+    for idx in range(end_idx, start_idx, -1):
+        a = agg.get(idx, {"kg": 0.0, "val": 0.0, "inv": 0})
+        p = agg.get(idx - 1)
+        d = _idx_to_date(idx)
+        rows.append({
+            "year": d.year, "month": d.month,
+            "label": d.strftime("%B %Y"),
+            "kg": a["kg"], "val": a["val"], "inv": a["inv"],
+            "kg_d": ((a["kg"] - p["kg"]) / p["kg"] * 100.0)
+                    if p and p["kg"] else None,
+            "val_d": ((a["val"] - p["val"]) / p["val"] * 100.0)
+                     if p and p["val"] else None,
+            "current": idx == end_idx,
+            "source": "invoices" if (d.year, d.month) in inv_months else "history",
+        })
+
+    chart = list(reversed(rows))
+    return render_template("reports/sales_month.html", rows=rows,
+                           months_back=months_back,
+                           chart_labels=[r["label"] for r in chart],
+                           chart_kg=[round(r["kg"]) for r in chart],
+                           chart_val=[round(r["val"]) for r in chart])
+
+
+@bp.route("/sales-month/<int:year>/<int:month>")
+def sales_month_detail(year, month):
+    """One month in detail: customer, rep and distributor performance,
+    ranked by kg, each against the previous month."""
+    if not (2015 <= year <= 2100 and 1 <= month <= 12):
+        abort(404)
+    pw = _pack_weights()
+    cust_info = _cust_dist_info()
+    inv_months = _invoice_month_set()
+    cur = _month_perf(year, month, pw, cust_info, inv_months)
+    py, pm = (year - 1, 12) if month == 1 else (year, month - 1)
+    prv = _month_perf(py, pm, pw, cust_info, inv_months)
+
+    # A month with no data at all (e.g. the current month before its first
+    # invoice upload) must NOT flood the tables with last month's names at
+    # zero — compare against nothing and show the empty notice instead
+    # (Stephan, 3 Aug 2026).
+    empty_month = not (cur["kg"] or cur["val"] or cur["inv"])
+    if empty_month:
+        prv_cmp = {"customers": {}, "reps": {}, "dists": {}}
+    else:
+        prv_cmp = prv
+
+    def table(cur_map, prv_map, top=None):
+        items = []
+        for name, c in cur_map.items():
+            p = prv_map.get(name)
+            items.append({
+                "name": name, "cid": c.get("cid"),
+                "kg": c["kg"], "val": c["val"], "inv": c.get("inv", 0),
+                "prev_kg": p["kg"] if p else 0.0,
+                "kg_d": ((c["kg"] - p["kg"]) / p["kg"] * 100.0)
+                        if p and p["kg"] else None,
+                "band": c.get("band"),
+                "share": (c["kg"] / cur["kg"] * 100.0) if cur["kg"] else None,
+                "gone": False,
+            })
+        for name, p in prv_map.items():
+            if name not in cur_map and p["kg"] > 0:
+                items.append({"name": name, "cid": p.get("cid"), "kg": 0.0,
+                              "val": 0.0, "inv": 0, "prev_kg": p["kg"],
+                              "kg_d": -100.0, "band": p.get("band"),
+                              "share": 0.0, "gone": True})
+        items.sort(key=lambda r: (r["gone"], -r["kg"], -r["prev_kg"]))
+        return (items[:top], len(items)) if top else (items, len(items))
+
+    customers, n_cust = table(cur["customers"], prv_cmp["customers"], top=60)
+    reps, _ = table(cur["reps"], prv_cmp["reps"])
+    dists, _ = table(cur["dists"], prv_cmp["dists"])
+    exp_rows = [r for r in dists if r["band"] == "Export"]
+    loc_rows = [r for r in dists if r["band"] != "Export"]
+
+    def subtotal(rs):
+        kg = sum(r["kg"] for r in rs)
+        pk = sum(r["prev_kg"] for r in rs)
+        return {"kg": kg, "val": sum(r["val"] for r in rs), "prev_kg": pk,
+                "kg_d": ((kg - pk) / pk * 100.0) if pk else None}
+
+    return render_template(
+        "reports/sales_month_detail.html",
+        year=year, month=month,
+        label=date(year, month, 1).strftime("%B %Y"),
+        prev_label=date(py, pm, 1).strftime("%B %Y"),
+        cur=cur, prv=prv,
+        kg_d=((cur["kg"] - prv["kg"]) / prv["kg"] * 100.0) if prv["kg"] else None,
+        val_d=((cur["val"] - prv["val"]) / prv["val"] * 100.0) if prv["val"] else None,
+        customers=customers, n_cust=n_cust, reps=reps, empty_month=empty_month,
+        exp_rows=exp_rows, loc_rows=loc_rows,
+        exp_tot=subtotal(exp_rows), loc_tot=subtotal(loc_rows),
+        n_active=sum(1 for c in cur["customers"].values() if c["kg"] > 0))
 
 
 def _csv(out, filename):

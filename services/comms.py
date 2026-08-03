@@ -30,7 +30,7 @@ def send_email(to_addr, subject, body, html=None, inline_images=None):
         port = 587
     user = settings_svc.get("smtp_user")
     pw = settings_svc.get("smtp_pass")
-    frm = settings_svc.get("smtp_from") or user or "no-reply@localhost"
+    frm = settings_svc.get("smtp_from") or "thehub@ranchersfinest.net"
     msg = EmailMessage()
     msg["From"] = frm
     msg["To"] = to_addr

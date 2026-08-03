@@ -116,6 +116,35 @@ def _ensure_runtime_schema():
     # with ZERO of them and the append-only ledger was enforced by nothing.
     _install_acc_triggers()
 
+    # Hub domain cutover (3 Aug 2026): runs after create_all so it also
+    # applies on a fresh database.
+    _set_hub_domain_settings()
+
+
+def _set_hub_domain_settings():
+    """One-time cutover (Stephan, 3 Aug 2026): the app now lives at
+    https://hub.ranchersfinest.net and all outbound email sends from
+    thehub@ranchersfinest.net. Sets app_base_url and smtp_from once,
+    keyed on a marker setting, so a later manual edit on Admin > Features
+    is never overwritten on boot."""
+    from models import Setting
+    try:
+        if db.session.get(Setting, "hub_domain_cutover_2026_08") is not None:
+            return
+        settings_svc.set_value("app_base_url", "https://hub.ranchersfinest.net")
+        settings_svc.set_value("smtp_from", "thehub@ranchersfinest.net")
+        settings_svc.set_value("hub_domain_cutover_2026_08", "done")
+        db.session.commit()
+        from flask import current_app
+        current_app.logger.warning(
+            "Hub domain cutover applied: app_base_url="
+            "https://hub.ranchersfinest.net, smtp_from=thehub@ranchersfinest.net")
+    except Exception:
+        db.session.rollback()
+        from flask import current_app
+        current_app.logger.exception(
+            "Hub domain cutover skipped (will retry next boot)")
+
 
 # The 25 database triggers that make posted accounting rows append-only.
 # Defined across migrations/acc_001..006. The boot self-check refuses to

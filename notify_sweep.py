@@ -4,7 +4,7 @@ The sweep normally piggybacks on web traffic; this script covers quiet hours.
 Suggested cron (cPanel), every 10 minutes:
 
     */10 * * * * cd /path/to/ranchers_pricing && \
-        APP_BASE_URL=https://your-portal-domain SECRET_KEY=... \
+        APP_BASE_URL=https://hub.ranchersfinest.net SECRET_KEY=... \
         python3 notify_sweep.py
 
 APP_BASE_URL (or the app_base_url setting) supplies the link base for the

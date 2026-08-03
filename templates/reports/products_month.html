@@ -24,15 +24,46 @@
 </form>
 
 {% if drill %}
+{% macro delta(d) %}{% if d is none %}<span class="text-muted">&mdash;</span>{% else %}<span class="{{ 'text-success' if d >= 0 else 'text-danger' }} fw-semibold">{{ '%+.0f'|format(d) }}%</span>{% endif %}{% endmacro %}
 <div class="rf-card p-3 mb-3">
   <h2 class="h6"><i class="bi bi-box-seam text-rf-orange"></i> {{ drill.name }} — monthly</h2>
   <canvas id="drillChart" height="80"></canvas>
-  <div class="small text-muted mt-2 mb-1">Top customers for this product (net UGX)</div>
-  <div class="row">
-    {% for name, val in drill.top_customers %}
-    <div class="col-md-6"><div class="d-flex justify-content-between border-bottom py-1">
-      <span class="small">{{ name }}</span><span class="small money">{{ '{:,.0f}'.format(val) }}</span></div></div>
+  <div class="small text-uppercase text-muted mt-3 mb-1">Month by month <span class="fw-normal">(last {{ drill.months|length }} months, kg)</span></div>
+  <div class="table-responsive">
+  <table class="table table-sm text-nowrap mb-0">
+    <thead><tr><th></th>{% for m in drill.months %}<th class="text-end">{{ m.label }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      <tr><td class="small text-muted">Volume (kg)</td>
+        {% for m in drill.months %}<td class="text-end fw-semibold" style="color:#F47A21">{{ '{:,.0f}'.format(m.kg) }}</td>{% endfor %}</tr>
+      <tr><td class="small text-muted">vs prev</td>
+        {% for m in drill.months %}<td class="text-end small">{{ delta(m.kg_d) }}</td>{% endfor %}</tr>
+      <tr><td class="small text-muted">Value (UGX)</td>
+        {% for m in drill.months %}<td class="text-end small text-muted">{{ '{:,.0f}'.format(m.val) }}</td>{% endfor %}</tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="rf-card p-3 mb-3">
+  <h2 class="h6 mb-2"><i class="bi bi-person-vcard text-rf-orange"></i> Customer performance — {{ drill.name }}
+    {% if drill.n_cust > drill.customers|length %}<span class="text-muted small fw-normal">(top {{ drill.customers|length }} of {{ drill.n_cust }})</span>{% endif %}</h2>
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Customer</th>
+      <th class="text-end">Volume since {{ drill.win_label }}</th>
+      <th class="text-end">Value (UGX)</th>
+      <th class="text-end">All-time volume</th></tr></thead>
+    <tbody>
+    {% for c in drill.customers %}
+    <tr>
+      <td class="small fw-semibold">{% if c.cid %}<a class="text-decoration-none" href="{{ url_for('customers.detail', customer_id=c.cid) }}">{{ c.name }}</a>{% else %}{{ c.name }}{% endif %}</td>
+      <td class="text-end small fw-semibold" style="color:#F47A21">{{ '{:,.0f}'.format(c.kg12) }} kg</td>
+      <td class="text-end small">{{ '{:,.0f}'.format(c.val12) }}</td>
+      <td class="text-end small text-muted">{{ '{:,.0f}'.format(c.kg) }} kg</td>
+    </tr>
     {% endfor %}
+    </tbody>
+  </table>
   </div>
 </div>
 {% endif %}
@@ -70,9 +101,9 @@ const ugxTick = v => 'UGX ' + Number(v).toLocaleString();
   new Chart(ctx,{data:{labels:{{ drill.labels|tojson }},
     datasets:[
       {type:'line',label:'Revenue',data:{{ drill.rev|tojson }},borderColor:'#F47A21',backgroundColor:'rgba(244,122,33,0.12)',fill:true,tension:0.3,pointRadius:0,borderWidth:2,yAxisID:'y'},
-      {type:'bar',label:'Quantity',data:{{ drill.qty|tojson }},backgroundColor:'rgba(110,113,73,0.5)',yAxisID:'y1'}
+      {type:'bar',label:'Volume (kg)',data:{{ drill.kg|tojson }},backgroundColor:'rgba(110,113,73,0.5)',yAxisID:'y1'}
     ]},
-    options:{plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:c=>c.dataset.label+': '+(c.dataset.label=='Revenue'?ugxTick(c.parsed.y):c.parsed.y)}}},
+    options:{plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:c=>c.dataset.label+': '+(c.dataset.label=='Revenue'?ugxTick(c.parsed.y):Number(c.parsed.y).toLocaleString()+' kg')}}},
       scales:{x:{ticks:{maxTicksLimit:12,autoSkip:true}},
         y:{position:'left',ticks:{callback:ugxTick}},
         y1:{position:'right',grid:{drawOnChartArea:false}}}}});

@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block heading %}{{ label }}{% endblock %}
+{% block content %}
+{% include "reports/_nav.html" %}
+{% macro ugxm(v) %}UGX {{ '{:,.0f}'.format(v or 0) }}{% endmacro %}
+{% macro kgm(v) %}{{ '{:,.0f}'.format(v or 0) }} kg{% endmacro %}
+{% macro delta(d) %}{% if d is none %}<span class="text-muted">&mdash;</span>{% else %}<span class="{{ 'text-success' if d >= 0 else 'text-danger' }} fw-semibold">{{ '%+.1f'|format(d) }}%</span>{% endif %}{% endmacro %}
+{% macro cname(r) %}{% if r.cid %}<a class="text-decoration-none" href="{{ url_for('customers.detail', customer_id=r.cid) }}">{{ r.name }}</a>{% else %}{{ r.name }}{% endif %}{% endmacro %}
+
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('reports.sales_by_month') }}"><i class="bi bi-arrow-left"></i> All months</a>
+  <div class="small text-muted">Compared with {{ prev_label }}</div>
+</div>
+
+{% if empty_month %}
+<div class="alert alert-info py-2 small mb-3"><i class="bi bi-info-circle"></i>
+  No sales recorded for {{ label }} in this database yet. The month fills as the daily invoice uploads land.</div>
+{% endif %}
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Volume</div>
+      <div class="h5 mb-0" style="color:#F47A21">{{ kgm(cur.kg) }}</div>
+      <div class="small">{{ delta(kg_d) }} <span class="text-muted">vs {{ prev_label }} ({{ kgm(prv.kg) }})</span></div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Value</div>
+      <div class="h5 mb-0">{{ ugxm(cur.val) }}</div>
+      <div class="small">{{ delta(val_d) }} <span class="text-muted">vs {{ ugxm(prv.val) }}</span></div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Invoices</div>
+      <div class="h5 mb-0">{{ '{:,}'.format(cur.inv) if cur.source == 'invoices' else '—' }}</div>
+      <div class="small text-muted">{{ 'from uploaded invoices' if cur.source == 'invoices' else 'from the monthly history pivot' }}</div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="rf-card p-3 h-100">
+      <div class="text-muted small text-uppercase">Active customers</div>
+      <div class="h5 mb-0">{{ '{:,}'.format(n_active) }}</div>
+      <div class="small text-muted">with sales this month</div>
+    </div>
+  </div>
+</div>
+
+<!-- Customer performance -->
+<div class="rf-card p-3 mb-3">
+  <h2 class="h6 mb-2"><i class="bi bi-person-vcard text-rf-orange"></i> Customer performance
+    {% if n_cust > customers|length %}<span class="text-muted small fw-normal">(top {{ customers|length }} of {{ n_cust }}, by kg)</span>{% endif %}</h2>
+  <div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>Customer</th>
+      <th class="text-end">Volume</th><th class="text-end">vs prev</th>
+      <th class="text-end">Prev month</th><th class="text-end">Value (UGX)</th>
+      <th class="text-end">Share</th><th class="text-end">Invoices</th></tr></thead>
+    <tbody>
+    {% for r in customers %}
+    <tr {% if r.gone %}class="text-muted"{% endif %}>
+      <td class="small fw-semibold">{{ cname(r) }}{% if r.gone %} <span class="badge text-bg-danger ms-1">no sales</span>{% endif %}</td>
+      <td class="text-end small fw-semibold" style="color:#F47A21">{{ kgm(r.kg) }}</td>
+      <td class="text-end small">{{ delta(r.kg_d) }}</td>
+      <td class="text-end small text-muted">{{ kgm(r.prev_kg) }}</td>
+      <td class="text-end small">{{ '{:,.0f}'.format(r.val) }}</td>
+      <td class="text-end small">{{ '%.1f'|format(r.share or 0) }}%</td>
+      <td class="text-end small">{{ r.inv if cur.source == 'invoices' else '—' }}</td>
+    </tr>
+    {% else %}<tr><td class="text-muted small">No sales recorded for this month.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <!-- Rep performance -->
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6 mb-2"><i class="bi bi-people-fill text-rf-orange"></i> Rep performance</h2>
+      {% if cur.source == 'invoices' %}
+      <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Rep</th>
+          <th class="text-end">Volume</th><th class="text-end">vs prev</th>
+          <th class="text-end">Value (UGX)</th><th class="text-end">Invoices</th></tr></thead>
+        <tbody>
+        {% for r in reps %}
+        <tr {% if r.gone %}class="text-muted"{% endif %}>
+          <td class="small fw-semibold">{{ r.name }}{% if r.gone %} <span class="badge text-bg-danger ms-1">no sales</span>{% endif %}</td>
+          <td class="text-end small fw-semibold" style="color:#F47A21">{{ kgm(r.kg) }}</td>
+          <td class="text-end small">{{ delta(r.kg_d) }}</td>
+          <td class="text-end small">{{ '{:,.0f}'.format(r.val) }}</td>
+          <td class="text-end small">{{ r.inv }}</td>
+        </tr>
+        {% else %}<tr><td class="text-muted small">No invoices this month.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+      <p class="text-muted small mb-0">Rep performance starts with the first uploaded invoice month. This month comes from the monthly history pivot, which carries no salesperson.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Distributor performance -->
+  <div class="col-lg-6">
+    <div class="rf-card p-3 h-100">
+      <h2 class="h6 mb-2"><i class="bi bi-truck text-rf-orange"></i> Distributor performance</h2>
+      {% for band_label, rows, tot in [('Export distributors', exp_rows, exp_tot), ('Local distributors', loc_rows, loc_tot)] %}
+      <div class="d-flex justify-content-between align-items-baseline mt-2">
+        <div class="small text-uppercase text-muted">{{ band_label }}</div>
+        <div class="small"><span class="fw-semibold" style="color:#F47A21">{{ kgm(tot.kg) }}</span>
+          <span class="text-muted">· {{ ugxm(tot.val) }} ·</span> {{ delta(tot.kg_d) }}</div>
+      </div>
+      <table class="table table-sm table-hover mb-1">
+        <tbody>
+        {% for r in rows %}
+        <tr {% if r.gone %}class="text-muted"{% endif %}>
+          <td class="small fw-semibold">{{ cname(r) }}{% if r.gone %} <span class="badge text-bg-danger ms-1">no sales</span>{% endif %}</td>
+          <td class="text-end small fw-semibold" style="color:#F47A21">{{ kgm(r.kg) }}</td>
+          <td class="text-end small">{{ delta(r.kg_d) }}</td>
+          <td class="text-end small text-muted">{{ '{:,.0f}'.format(r.val) }}</td>
+        </tr>
+        {% else %}<tr><td class="text-muted small">No {{ band_label|lower }} sales this month.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<p class="small text-muted">Untaxed UGX, net of credit notes. Kilograms lead, value follows. {% if cur.unknown_packs %}{{ '{:,}'.format(cur.unknown_packs) }} line(s) had no pack weight and count 1 unit = 1 kg.{% endif %}</p>
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block heading %}Sales by month{% endblock %}
+{% block content %}
+{% include "reports/_nav.html" %}
+{% macro kgm(v) %}{{ '{:,.0f}'.format(v or 0) }} kg{% endmacro %}
+{% macro delta(d) %}{% if d is none %}<span class="text-muted">&mdash;</span>{% else %}<span class="{{ 'text-success' if d >= 0 else 'text-danger' }} fw-semibold">{{ '%+.1f'|format(d) }}%</span>{% endif %}{% endmacro %}
+
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <div class="btn-group btn-group-sm">
+    {% for n, lbl in [(13, '12 months'), (25, '24 months'), (36, '3 years')] %}
+    <a class="btn {{ 'btn-primary' if months_back == n else 'btn-outline-secondary' }}" href="{{ url_for('reports.sales_by_month', months=n) }}">{{ lbl }}</a>
+    {% endfor %}
+  </div>
+  <div class="small text-muted">Click a month for customer, rep and distributor detail</div>
+</div>
+
+<div class="rf-card p-3 mb-3">
+  <h2 class="h6 mb-1"><i class="bi bi-bar-chart text-rf-orange"></i> Volume by month <span class="text-muted small fw-normal">(kg)</span></h2>
+  <canvas id="momChart" height="72"></canvas>
+</div>
+
+<div class="table-responsive rf-card">
+<table class="table table-sm table-hover mb-0">
+  <thead><tr>
+    <th>Month</th>
+    <th class="text-end">Volume</th><th class="text-end">vs prev</th>
+    <th class="text-end">Value (UGX)</th><th class="text-end">vs prev</th>
+    <th class="text-end">Invoices</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr {% if r.current %}class="table-warning"{% endif %} style="cursor:pointer" onclick="window.location='{{ url_for('reports.sales_month_detail', year=r.year, month=r.month) }}'">
+    <td class="fw-semibold"><a class="text-decoration-none" href="{{ url_for('reports.sales_month_detail', year=r.year, month=r.month) }}">{{ r.label }}</a>
+      {% if r.current %}<span class="badge text-bg-warning ms-1">to date</span>{% endif %}</td>
+    <td class="text-end fw-semibold" style="color:#F47A21">{{ kgm(r.kg) }}</td>
+    <td class="text-end">{{ delta(r.kg_d) }}</td>
+    <td class="text-end">{{ '{:,.0f}'.format(r.val) }}</td>
+    <td class="text-end">{{ delta(r.val_d) }}</td>
+    <td class="text-end">{{ '{:,}'.format(r.inv) if r.source == 'invoices' else '—' }}</td>
+    <td class="text-end"><i class="bi bi-chevron-right text-muted"></i></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="small text-muted mt-2">Untaxed UGX, net of credit notes. Kilograms derive from product pack sizes; unknown packs count 1 unit = 1 kg. Months before the invoice uploads come from the monthly history pivot, which carries no invoice count. The current month runs to date, so its change against a full previous month reads low until month end.</p>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+(function(){
+  const ctx = document.getElementById('momChart');
+  if (!ctx) return;
+  const val = {{ chart_val|tojson }};
+  new Chart(ctx, {
+    type: 'bar',
+    data: { labels: {{ chart_labels|tojson }},
+      datasets: [{ data: {{ chart_kg|tojson }}, backgroundColor: '#F47A21', borderRadius: 4 }] },
+    options: { plugins: { legend: { display: false },
+      tooltip: { callbacks: { label: c => Number(c.parsed.y).toLocaleString() + ' kg (UGX ' + Number(val[c.dataIndex]).toLocaleString() + ')' } } },
+      scales: { y: { ticks: { callback: v => Number(v).toLocaleString() } } } }
+  });
+})();
+</script>
+{% endblock %}

@@ -1,21 +1,24 @@
-# cPanel Git Version Control deployment tasks — La Patisserie Hub.
+# cPanel Git Version Control deployment tasks — Ranchers Finest Sales Hub.
 # Runs when you click "Deploy HEAD Commit" in cPanel > Git Version Control.
 #
 # This account clones the repo DIRECTLY into the Passenger application
 # directory (repo path == app dir), so there is no copy step: deploy just
 # installs requirements, fixes permissions and gracefully restarts Passenger.
 #
-# Account values (set 27 Jul 2026, from IT):
-#   APPDIR  = /home/aphagr5/lapatisseriehub.aphagroafrica.com
-#   VENVBIN = /home/aphagr5/virtualenv/lapatisseriehub.aphagroafrica.com/3.13/bin
+# Domain cutover 3 Aug 2026: the app moves to hub.ranchersfinest.net.
+# CONFIRM WITH IT before the first deploy on the new domain: the exact
+# APPDIR and VENVBIN paths below (cPanel account user and Python version)
+# must match what cPanel > Setup Python App shows for hub.ranchersfinest.net.
+#   APPDIR  = /home/aphagr5/hub.ranchersfinest.net
+#   VENVBIN = /home/aphagr5/virtualenv/hub.ranchersfinest.net/3.13/bin
 #
 # Secrets (SECRET_KEY, DATABASE_URL) are NOT set here and NOT in the repo:
 # set them as Environment variables in cPanel > Setup Python App.
 ---
 deployment:
   tasks:
-    - export APPDIR=/home/aphagr5/lapatisseriehub.aphagroafrica.com
-    - export VENVBIN=/home/aphagr5/virtualenv/lapatisseriehub.aphagroafrica.com/3.13/bin
+    - export APPDIR=/home/aphagr5/hub.ranchersfinest.net
+    - export VENVBIN=/home/aphagr5/virtualenv/hub.ranchersfinest.net/3.13/bin
     - $VENVBIN/pip install --upgrade -r $APPDIR/requirements.txt
     - /bin/find $APPDIR -type d -not -path '*/instance/*' -not -path '*/.git/*' -exec chmod 755 {} \;
     - /bin/find $APPDIR -type f -not -path '*/instance/*' -not -path '*/.git/*' -exec chmod 644 {} \;
