@@ -223,7 +223,8 @@ class User(UserMixin, db.Model):
         The CFO reads the whole base like they read every order —
         oversight, not workflow (added 8 Jul 2026)."""
         return self.role in ("admin", "ceo", "manager", "order_manager", "telesales",
-                             "pricing_officer", "sales_director", "cfo")
+                             "pricing_officer", "sales_director", "cfo",
+                             "finance_manager")
 
     @property
     def can_fulfill(self):

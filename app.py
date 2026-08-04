@@ -387,6 +387,10 @@ def _run_migrations():
                 solcols = {c["name"] for c in insp.get_columns("sales_order_line")}
                 if "tax_category" not in solcols:
                     conn.execute(text("ALTER TABLE sales_order_line ADD COLUMN tax_category VARCHAR(8)"))
+                if "accepted_qty" not in solcols:
+                    conn.execute(text("ALTER TABLE sales_order_line ADD COLUMN accepted_qty FLOAT"))
+                if "variance_reason" not in solcols:
+                    conn.execute(text("ALTER TABLE sales_order_line ADD COLUMN variance_reason VARCHAR(24)"))
             if "pricelist" in insp.get_table_names():
                 pcols2 = {c["name"] for c in insp.get_columns("pricelist")}
                 if "allow_small_orders" not in pcols2:
@@ -430,6 +434,15 @@ def _run_migrations():
                     conn.execute(text("ALTER TABLE sales_order ADD COLUMN fulfilment_started_at DATETIME"))
                 for col, ddl in [
                     ("delivery_time", "delivery_time VARCHAR(8)"),
+                    # Invoice-after-delivery columns (31 Jul build): present
+                    # in models but missing from this ladder until 2 Aug —
+                    # a fresh or production database crashed on any
+                    # SalesOrder query without them.
+                    ("accepted_recorded_at", "accepted_recorded_at DATETIME"),
+                    ("accepted_recorded_by_id", "accepted_recorded_by_id INTEGER"),
+                    ("dnote_filing_no", "dnote_filing_no VARCHAR(20)"),
+                    ("dnote_filed_at", "dnote_filed_at DATETIME"),
+                    ("dnote_filed_by_id", "dnote_filed_by_id INTEGER"),
                     ("accepted_at", "accepted_at DATETIME"),
                     ("accepted_by_id", "accepted_by_id INTEGER"),
                     ("credit_checked", "credit_checked BOOLEAN DEFAULT 0"),

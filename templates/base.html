@@ -174,9 +174,11 @@
       {% endif %}
       {% if has_perm(current_user, 'view_reports') %}
       {{ navgroup('Company') }}
-      {% if current_user.role == 'cfo' %}
+      {% if current_user.role in ['cfo', 'finance_manager'] %}
       <a class="nav-link {{ 'active' if ep.startswith('orders') }}" href="{{ url_for('orders.index') }}"><i class="bi bi-cart-check"></i> Orders</a>
-      <a class="nav-link {{ 'active' if ep.startswith('customers') and ep != 'customers.distributors' }}" href="{{ url_for('customers.index') }}"><i class="bi bi-person-vcard"></i> Customers</a>
+      <a class="nav-link {{ 'active' if ep.startswith('customers') and ep not in ['customers.distributors', 'customers.finance_uploads'] }}" href="{{ url_for('customers.index') }}"><i class="bi bi-person-vcard"></i> Customers</a>
+      <a class="nav-link {{ 'active' if ep=='customers.distributors' }}" href="{{ url_for('customers.distributors') }}"><i class="bi bi-truck"></i> Distributors</a>
+      <a class="nav-link {{ 'active' if ep.startswith('targets') or ep.startswith('reps') }}" href="{{ url_for('targets.index') }}"><i class="bi bi-people-fill"></i> Reps</a>
       <a class="nav-link {{ 'active' if ep.startswith('approvals') }}" href="{{ url_for('approvals.index') }}"><i class="bi bi-check2-square"></i> Approvals{% if approvals_pending %} <span class="badge badge-danger">{{ approvals_pending }}</span>{% endif %}</a>
       <a class="nav-link {{ 'active' if ep.startswith('messages') }}" href="{{ url_for('messages.index') }}"><i class="bi bi-chat-dots"></i> Messages{% if staff_unread %} <span class="badge badge-danger">{{ staff_unread }}</span>{% endif %}</a>
       {% endif %}

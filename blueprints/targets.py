@@ -36,6 +36,7 @@ def _view_guard(fn):
                 or getattr(current_user, "is_ceo", False)
                 or getattr(current_user, "is_sales_director", False)
                 or getattr(current_user, "is_sales_manager", False)
+                or current_user.role in ("cfo", "finance_manager")
                 or has_perm(current_user, "manage_targets")):
             abort(403)
         return fn(*a, **k)
