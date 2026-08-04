@@ -410,6 +410,16 @@ def save(order_id):
         o.customer_po = request.form.get("customer_po")
         o.notes = request.form.get("notes")
         file = request.files.get("lpo")
+        # LPO requirement (Stephan, 4 Aug 2026): submission needs the LPO
+        # attached — either uploaded now or already on the order. Controlled
+        # by the require_lpo feature flag (Admin > Features), on by default.
+        from services.features import feature_on
+        if (feature_on("require_lpo") and not o.lpo_filename
+                and not (file and file.filename)):
+            db.session.rollback()
+            flash("Attach your LPO (photo or file) before submitting — "
+                  "orders cannot be submitted without one.", "warning")
+            return redirect(url_for("portal.order", order_id=o.id))
         if file and file.filename:
             ext = os.path.splitext(file.filename)[1].lower()
             if ext not in _LPO_EXT:

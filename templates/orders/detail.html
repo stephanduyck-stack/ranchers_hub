@@ -190,7 +190,7 @@
         {% for l in order.lines %}
           <tr>
             <td>{{ l.article_no }}</td>
-            <td>{{ l.description }}{% if l.is_fixed %} <span class="badge badge-fixed">fixed</span>{% endif %}{% if order.vat_applicable and l.is_vatable %} <span class="badge bg-secondary" title="VAT charged on this item">VAT</span>{% endif %}</td>
+            <td>{{ l.description }}{% if l.is_fixed %} <span class="badge badge-fixed">fixed</span>{% endif %}{# per-line VAT badge removed 4 Aug 2026 (Stephan) — the totals block still shows the VAT amount #}</td>
             <td class="small">{{ l.pack_size }}</td>
             <td class="text-end">
               {% if (order.is_lines_amendable and can_amend) %}
@@ -407,6 +407,20 @@ function lpoPicked(inp){
             {{ credit_info.age if credit_info.age is not none else '—' }} days, within the {{ credit_info.days }}-day limit{% endif %}.</div>
           {% endif %}
         {% endif %}
+        {# Delivery confirmation (3 Aug 2026): acceptance confirms date + expected
+           time. A change fires an automatic message to the customer and an
+           email to the rep (orders._notify_delivery_change). #}
+        <div class="rf-card p-2 mb-2" style="background:#fbf3ea">
+          <div class="small text-uppercase text-muted mb-1"><i class="bi bi-calendar-check text-rf-orange"></i> Confirm delivery</div>
+          <div class="row g-2 align-items-end">
+            <div class="col-auto"><label class="form-label small mb-0">Delivery date</label>
+              <input type="date" class="form-control form-control-sm" name="confirm_delivery_date" value="{{ order.delivery_date or '' }}" required></div>
+            <div class="col-auto"><label class="form-label small mb-0">Expected time</label>
+              <input type="time" class="form-control form-control-sm" name="confirm_delivery_time" value="{{ order.delivery_time or '' }}"></div>
+            <div class="col small text-muted">Requested: {{ order.delivery_date.strftime('%a %d %b %Y') if order.delivery_date else 'no date' }}{% if order.delivery_time %} at {{ order.delivery_time }}{% endif %}.
+              Changing the date or time sends an automatic message to the customer and an email to the rep.</div>
+          </div>
+        </div>
         <p class="small text-muted">Tick any item that is out of stock and, if you know it, when it is expected back. In-stock items are accepted and go into fulfilment when you proceed.</p>
         <div class="table-responsive">
         <table class="table table-sm align-middle">

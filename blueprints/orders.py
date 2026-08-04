@@ -493,6 +493,7 @@ def update_details(order_id):
     if not order.is_amendable:
         flash("This order can no longer be amended.", "warning")
         return redirect(url_for("orders.detail", order_id=order.id))
+    old_dd, old_dt = order.delivery_date, order.delivery_time
     order.delivery_date = _parse_date(request.form.get("delivery_date"))
     order.delivery_time = _parse_time(request.form.get("delivery_time"))
     order.delivery_address = request.form.get("delivery_address")
@@ -500,8 +501,16 @@ def update_details(order_id):
     # Payment terms are set on the customer and inherited; never editable per order.
     order.payment_terms = order.customer.payment_terms if order.customer else order.payment_terms
     order.notes = request.form.get("notes")
+    # Delivery change on a placed/submitted order notifies the customer and
+    # the rep automatically (Stephan, 3 Aug 2026). Drafts stay silent.
+    changed = (order.status != "draft"
+               and _notify_delivery_change(order, old_dd, old_dt,
+                                           current_user.full_name))
     db.session.commit()
     flash("Order details saved.", "success")
+    if changed:
+        flash("Delivery date/time changed — the customer has an automatic "
+              "message and the rep has been emailed.", "info")
     return redirect(url_for("orders.detail", order_id=order.id))
 
 
@@ -515,6 +524,14 @@ def place(order_id):
         abort(400)
     if not order.lines:
         flash("Add at least one line before placing the order.", "warning")
+        return redirect(url_for("orders.detail", order_id=order.id))
+    # LPO requirement (Stephan, 4 Aug 2026): no order goes through without
+    # the customer's LPO attached. Controlled by the require_lpo feature
+    # flag (Admin > Features), on by default.
+    from services.features import feature_on
+    if feature_on("require_lpo") and not order.lpo_filename:
+        flash("Attach the customer's LPO (photo or file) before placing "
+              "this order — orders cannot go through without one.", "warning")
         return redirect(url_for("orders.detail", order_id=order.id))
     # H4: a blocked account cannot have an order placed for it.
     cust = order.customer
@@ -682,6 +699,47 @@ def pod(order_id):
 # stock_review, which moves orders to in_fulfillment and seeds fulfilled_qty.
 
 
+def _notify_delivery_change(order, old_date, old_time, actor):
+    """Automatic notifications when the delivery date or expected time on an
+    order changes (Stephan, 3 Aug 2026). The customer gets a message in their
+    portal Messages thread (the notify sweep emails unread messages), every
+    assigned rep gets a direct email, and the change is logged. Returns True
+    when a change was notified, False when nothing changed."""
+    from models import Message
+
+    def fmt(d, t):
+        s = d.strftime("%a %d %b %Y") if d else "no date set"
+        return s + (f" at {t}" if t else "")
+
+    old_s = fmt(old_date, old_time)
+    new_s = fmt(order.delivery_date, order.delivery_time)
+    if old_s == new_s:
+        return False
+    db.session.add(Message(
+        customer_id=order.customer_id, sender_type="staff",
+        sender_user_id=current_user.id,
+        sender_name=getattr(current_user, "full_name", "Sales team"),
+        body=(f"Delivery for your order {order.number} is confirmed for "
+              f"{new_s} (previously {old_s})."),
+        order_id=order.id,
+        read_by_customer=False, read_by_staff=True))
+    from services import comms
+    cust = order.customer
+    for rep in (cust.reps if cust else []):
+        if rep.email and rep.is_active:
+            comms.send_email(
+                rep.email,
+                f"Delivery changed: {order.number} — {cust.name}",
+                f"The delivery for order {order.number} ({cust.name}) "
+                f"has changed.\n\n"
+                f"Was: {old_s}\nNow: {new_s}\n\n"
+                f"Changed by {actor}. The customer has an automatic "
+                f"message in their portal Messages.")
+    log("delivery_change", "sales_order", order.id,
+        detail=f"{order.number}: delivery {old_s} -> {new_s} by {actor}")
+    return True
+
+
 @bp.route("/<int:order_id>/stock-review", methods=["POST"])
 @login_required
 def stock_review(order_id):
@@ -721,6 +779,19 @@ def stock_review(order_id):
               f"({cust.account_note or 'no note'}). Finance has been alerted "
               f"and decides in the Credit alerts queue.", "danger")
         return redirect(url_for("orders.detail", order_id=order.id))
+
+    # Delivery confirmation (Stephan, 3 Aug 2026): acceptance confirms the
+    # delivery date and expected time. A change against what the order
+    # carried notifies the customer (Messages) and the rep (email).
+    old_dd, old_dt = order.delivery_date, order.delivery_time
+    cdd = _parse_date(request.form.get("confirm_delivery_date"))
+    cdt = _parse_time(request.form.get("confirm_delivery_time"))
+    if cdd:
+        order.delivery_date = cdd
+    if "confirm_delivery_time" in request.form:
+        order.delivery_time = cdt
+    delivery_changed = _notify_delivery_change(
+        order, old_dd, old_dt, current_user.full_name)
 
     oos_lines = []
     for l in order.lines:
@@ -800,6 +871,9 @@ def stock_review(order_id):
             msg += (f" Back order {bo.number} "
                     + ("created." if bo_action == "create_now" else "proposed to the customer."))
     flash(msg, "success")
+    if delivery_changed:
+        flash("Delivery date/time changed — the customer has an automatic "
+              "message and the rep has been emailed.", "info")
     # 21 Jul 2026: acceptance hands the store a paper picking slip.
     return redirect(url_for("orders.detail", order_id=order.id, print="pickslip"))
 

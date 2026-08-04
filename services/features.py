@@ -19,6 +19,10 @@ FEATURES = [
     ("stock_guard", "Stock guard at fulfilment",
      "Fulfilment cannot complete an order for more than the stock on hand; only the "
      "store manager adds stock. Untick only while loading opening balances."),
+    ("require_lpo", "LPO required on every order",
+     "An order cannot be placed by staff or submitted from the portal without "
+     "the customer's LPO attached (photo or file). Untick to make the LPO "
+     "optional again."),
     ("invoice_after_delivery", "Invoice after delivery (delivery-note flow)",
      "Fulfilment produces only a delivery note; the driver delivers, the customer "
      "confirms quantities and signs, the driver uploads the signed note, and the "
@@ -29,7 +33,7 @@ FEATURES = [
 
 # Flags in this set are ON until an admin explicitly turns them off (controls,
 # not opt-in modules). Everything else stays opt-in (off until enabled).
-DEFAULT_ON = {"stock_guard"}
+DEFAULT_ON = {"stock_guard", "require_lpo"}
 
 
 def feature_on(name):

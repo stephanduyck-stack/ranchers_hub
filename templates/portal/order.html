@@ -93,8 +93,10 @@
     </div>
     <div class="mb-2"><label class="form-label small">Delivery address</label>
       <textarea class="form-control form-control-sm" name="delivery_address" rows="2">{{ order.delivery_address or order.customer.notes or '' }}</textarea></div>
-    <div class="mb-2"><label class="form-label small">Attach LPO (optional)</label>
-      <input class="form-control form-control-sm" type="file" name="lpo" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx"></div>
+    {% set lpo_required = features.get('require_lpo') and not order.lpo_filename %}
+    <div class="mb-2"><label class="form-label small">Attach LPO {{ '(required)' if lpo_required else '(attached)' if order.lpo_filename else '(optional)' }}</label>
+      <input class="form-control form-control-sm" type="file" name="lpo" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xls,.xlsx">
+      {% if lpo_required %}<div class="form-text">Your order cannot be submitted without the LPO — a photo of the signed document works.</div>{% endif %}</div>
     <div class="mb-2"><label class="form-label small">Notes</label>
       <textarea class="form-control form-control-sm" name="notes" rows="2">{{ order.notes or '' }}</textarea></div>
   </div>
