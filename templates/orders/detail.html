@@ -23,6 +23,7 @@
       Customer: <strong>{{ order.customer.name }}</strong>
       · from {{ order.source_pricelist.name if order.source_pricelist else '—' }}
       · ordered {{ order.order_date }}
+      {% if order.placed_by_label %} · placed by <strong>{{ order.placed_by_label }}</strong>{% endif %}
       {% if order.delivery_date %} · delivery {{ order.delivery_date }}{% if order.delivery_time %} {{ order.delivery_time }}{% endif %}{% endif %}
       {% if order.customer_po %} · PO {{ order.customer_po }}{% endif %}
       {% if order.currency=='USD' and order.exchange_rate_value %} · rate UGX {{ '%.0f'|format(order.exchange_rate_value) }}/USD (stamped){% endif %}

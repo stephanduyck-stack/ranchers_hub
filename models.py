@@ -809,6 +809,25 @@ class SalesOrder(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey("user.id"))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     placed_at = db.Column(db.DateTime)
+
+    creator = db.relationship("User", foreign_keys=[created_by])
+
+    @property
+    def placed_by_label(self):
+        """Who placed the order, human readable (Stephan, 6 Aug 2026): a
+        portal customer login shows as the customer via the portal; staff
+        show their name and role. None when the creator is unknown (old
+        imports)."""
+        u = self.creator
+        if u is None:
+            return None
+        if (u.role or "") == "customer":
+            who = self.customer.name if self.customer else (u.full_name or u.username)
+            return f"{who} · customer portal"
+        nice = {"rep": "rep", "telesales": "telesales",
+                "order_manager": "order desk", "sales_manager": "sales manager",
+                "admin": "admin", "ceo": "CEO", "manager": "manager"}
+        return f"{u.full_name or u.username} · {nice.get(u.role, u.role)}"
     accepted_at = db.Column(db.DateTime)
     accepted_by_id = db.Column(db.Integer, db.ForeignKey("user.id", ondelete="SET NULL"))  # M1: optional ref
     credit_checked = db.Column(db.Boolean, default=False)

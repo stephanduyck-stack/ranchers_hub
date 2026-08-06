@@ -36,7 +36,8 @@
     <tr data-search="{{ (o.number ~ ' ' ~ (o.customer.name if o.customer else ''))|lower }}">
       <td><a href="{{ url_for('orders.detail', order_id=o.id) }}" class="fw-semibold">{{ o.number }}</a>
         {% if o.backorder_of_id %}<span class="badge bg-secondary" title="Back order">back order</span>{% endif %}</td>
-      <td>{{ o.customer.name }}</td>
+      <td>{{ o.customer.name }}
+        {% if o.placed_by_label %}<div class="small text-muted"><i class="bi bi-person"></i> {{ o.placed_by_label }}</div>{% endif %}</td>
       <td>{{ o.currency }}</td>
       <td>
         {% if o.status=='draft' %}<span class="badge bg-secondary">draft</span>

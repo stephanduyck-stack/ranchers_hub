@@ -238,6 +238,7 @@
       <h2 class="h6">Order details</h2>
       <dl class="row small mb-0">
         <dt class="col-5">Submitted</dt><dd class="col-7">{{ order.submitted_at.strftime('%d %b %Y') if order.submitted_at else '—' }}</dd>
+        <dt class="col-5">Placed by</dt><dd class="col-7">{{ order.placed_by_label or '—' }}</dd>
         <dt class="col-5">Delivery</dt><dd class="col-7">{{ order.delivery_date or '—' }}{% if order.delivery_time %} · {{ order.delivery_time }}{% endif %}</dd>
         <dt class="col-5">Your PO</dt><dd class="col-7">{{ order.customer_po or '—' }}</dd>
         <dt class="col-5">LPO</dt><dd class="col-7">{% if order.lpo_filename %}<a href="{{ url_for('portal.lpo', order_id=order.id) }}">download</a>{% else %}—{% endif %}</dd>
